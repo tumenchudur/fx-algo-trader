@@ -1,0 +1,76 @@
+# Walk-Forward Analysis Configuration
+# ====================================
+# Tests strategy robustness with out-of-sample evaluation.
+#
+# DISCLAIMER: This is for EDUCATIONAL purposes only.
+
+# Walk-forward settings
+num_windows: 5        # Number of train/test windows
+train_pct: 0.7        # 70% training, 30% testing
+gap_bars: 10          # Gap between train and test to prevent leakage
+anchored: false       # Rolling (false) or anchored (true) windows
+
+# Base backtest configuration
+base_config:
+  run_id: wf_mean_reversion
+
+  # Data settings
+  data_path: data/sample/EURUSD_M5.parquet
+  symbols:
+    - EURUSD
+
+  # Account settings
+  initial_capital: 10000.0
+  base_currency: USD
+
+  # Output
+  output_dir: runs
+
+  # Strategy configuration
+  strategy:
+    name: mean_reversion_v1
+    strategy_type: mean_reversion
+    enabled: true
+    symbols:
+      - EURUSD
+    timeframe: M5
+
+    # Entry/exit settings
+    use_stop_loss: true
+    use_take_profit: true
+    risk_reward_ratio: 1.5
+    time_exit_bars: 24  # Exit after 2 hours
+
+    # Mean reversion parameters
+    params:
+      lookback: 20          # MA period
+      z_threshold: 2.0      # Entry when z-score exceeds threshold
+      sl_std_multiplier: 3.0
+      exit_at_mean: true    # Exit when price returns to mean
+      use_returns: false    # Z-score of price vs MA
+
+  # Cost model
+  costs:
+    commission_per_lot: 7.0
+    commission_type: per_lot
+    slippage_model: fixed_pips
+    slippage_pips: 0.5
+    use_provided_spread: true
+    default_spread_pips: 1.5
+
+  # Risk management
+  risk:
+    max_risk_per_trade_pct: 1.0
+    max_position_size_lots: 5.0
+    min_position_size_lots: 0.01
+    max_open_positions: 3
+    max_exposure_per_currency_pct: 30.0
+    daily_loss_limit_pct: 3.0
+    max_drawdown_pct: 10.0
+    close_positions_on_kill: true
+    max_spread_pips: 3.0
+    stale_price_seconds: 60.0
+    no_martingale: true
+    no_revenge_trading: true
+
+  random_seed: 42

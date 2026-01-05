@@ -1,0 +1,88 @@
+# Paper Trading Configuration
+# ===========================
+# PAPER TRADING ONLY - No real money involved.
+#
+# This simulates live trading using historical data.
+# Use this to test strategies before considering real trading.
+#
+# DISCLAIMER: This is for EDUCATIONAL purposes only.
+# NO GUARANTEES OF PROFITABILITY.
+
+# Trading mode - MUST be "paper"
+mode: paper
+
+# Data source (simulates live data stream)
+data_path: data/sample/EURUSD_M5.parquet
+symbols:
+  - EURUSD
+
+# Account settings
+initial_capital: 10000.0
+base_currency: USD
+
+# Execution settings
+poll_interval_seconds: 1.0  # Check for signals every second
+max_iterations: null        # null = run until data exhausted or stopped
+
+# Output
+output_dir: runs/paper
+log_level: INFO
+
+# Strategy configuration
+strategy:
+  name: paper_volatility_breakout
+  strategy_type: volatility_breakout
+  enabled: true
+  symbols:
+    - EURUSD
+  timeframe: M5
+
+  use_stop_loss: true
+  use_take_profit: true
+  risk_reward_ratio: 2.0
+  time_exit_bars: 48
+
+  params:
+    lookback: 20
+    atr_period: 14
+    atr_threshold: 1.0
+    sl_atr_multiplier: 2.0
+
+# Cost model - use realistic costs
+costs:
+  commission_per_lot: 7.0
+  commission_type: per_lot
+  slippage_model: fixed_pips
+  slippage_pips: 0.5
+  use_provided_spread: true
+  default_spread_pips: 1.5
+
+# Risk management - CONSERVATIVE settings for paper trading
+risk:
+  # Per-trade limits
+  max_risk_per_trade_pct: 0.5   # Very conservative for paper testing
+  max_position_size_lots: 2.0
+  min_position_size_lots: 0.01
+
+  # Portfolio limits
+  max_open_positions: 2
+  max_exposure_per_currency_pct: 20.0
+  max_total_exposure_pct: 50.0
+  max_leverage: 5.0
+
+  # Kill switches
+  daily_loss_limit_pct: 2.0     # Tight daily loss limit
+  max_drawdown_pct: 5.0         # Conservative drawdown limit
+  close_positions_on_kill: true
+
+  # Market filters
+  max_spread_pips: 2.0          # Tight spread filter
+  stale_price_seconds: 30.0
+
+  # Anti-pattern
+  no_martingale: true
+  no_revenge_trading: true
+  revenge_cooldown_bars: 10     # Longer cooldown
+
+  # Volatility filter
+  enable_volatility_filter: false

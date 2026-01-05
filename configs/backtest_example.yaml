@@ -1,0 +1,91 @@
+# Backtest Configuration Example
+# ================================
+# This configuration runs a backtest using the Volatility Breakout strategy.
+#
+# DISCLAIMER: This is for EDUCATIONAL purposes only.
+# Trading forex involves significant risk. Use paper trading.
+
+# Run identification
+run_id: bt_volatility_breakout_demo
+
+# Data settings
+data_path: data/sample/EURUSD_M5.parquet
+symbols:
+  - EURUSD
+# start_date: 2024-01-01  # Optional: filter by date
+# end_date: 2024-12-31
+
+# Account settings
+initial_capital: 10000.0
+base_currency: USD
+
+# Output
+output_dir: runs
+
+# Strategy configuration
+strategy:
+  name: volatility_breakout_v1
+  strategy_type: volatility_breakout
+  enabled: true
+  symbols:
+    - EURUSD
+  timeframe: M5
+
+  # Entry/exit settings
+  use_stop_loss: true
+  use_take_profit: true
+  risk_reward_ratio: 2.0
+  time_exit_bars: 48  # Exit after 4 hours if not stopped out
+
+  # Strategy-specific parameters
+  params:
+    lookback: 20           # Bars for high/low breakout
+    atr_period: 14         # ATR period for volatility
+    atr_threshold: 1.0     # Trade when ATR > X * avg ATR
+    sl_atr_multiplier: 2.0 # Stop loss = entry +/- 2*ATR
+    require_close_above: true
+
+# Cost model
+costs:
+  # Commission
+  commission_per_lot: 7.0  # $7 per standard lot
+  commission_type: per_lot
+
+  # Slippage
+  slippage_model: fixed_pips
+  slippage_pips: 0.5
+
+  # Spread
+  use_provided_spread: true  # Use bid/ask from data
+  default_spread_pips: 1.5   # Fallback if no bid/ask
+  spread_multiplier: 1.0
+
+# Risk management (CRITICAL)
+risk:
+  # Per-trade limits
+  max_risk_per_trade_pct: 1.0   # Risk max 1% per trade
+  max_position_size_lots: 5.0   # Max 5 lots per position
+  min_position_size_lots: 0.01  # Micro lots minimum
+
+  # Portfolio limits
+  max_open_positions: 3
+  max_exposure_per_currency_pct: 30.0
+  max_total_exposure_pct: 100.0
+  max_leverage: 10.0
+
+  # Kill switches
+  daily_loss_limit_pct: 3.0     # Stop if daily loss > 3%
+  max_drawdown_pct: 10.0        # Kill switch at 10% drawdown
+  close_positions_on_kill: true
+
+  # Market condition filters
+  max_spread_pips: 3.0          # Skip if spread too wide
+  stale_price_seconds: 60.0     # Skip if price stale
+
+  # Anti-pattern protections
+  no_martingale: true
+  no_revenge_trading: true
+  revenge_cooldown_bars: 5
+
+# Reproducibility
+random_seed: 42
