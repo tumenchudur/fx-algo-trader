@@ -1,7 +1,6 @@
 """Economic calendar data fetcher.
 
 Fetches high-impact economic events to filter trading around news releases.
-Supports multiple data sources with fallback.
 """
 
 import logging
@@ -42,47 +41,23 @@ class EconomicEvent:
 class EconomicCalendar:
     """Fetches and caches economic calendar events.
 
-    Supports multiple data sources:
-    - Finnhub (free API, recommended)
-    - Forex Factory (often blocks requests)
-    - Manual fallback for major events
-
-    Get a free Finnhub API key at: https://finnhub.io/
     """
 
-    FINNHUB_URL = "https://finnhub.io/api/v1/calendar/economic"
     FOREX_FACTORY_URL = "https://www.forexfactory.com/ffcal_week_this.xml"
     CACHE_DURATION = timedelta(hours=4)
 
-    def __init__(self, finnhub_api_key: Optional[str] = None):
-        """
-        Initialize calendar.
-
-        Args:
-            finnhub_api_key: Optional Finnhub API key for better data.
-                            Get free key at https://finnhub.io/
-        """
         self._events: list[EconomicEvent] = []
         self._last_fetch: Optional[datetime] = None
-        self._finnhub_api_key = finnhub_api_key
         self._http_client = httpx.Client(
             timeout=10.0,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         )
 
     def fetch_events(self, force: bool = False) -> list[EconomicEvent]:
-        """Fetch economic events from available sources.
-
-        Tries sources in order:
-        1. Finnhub (if API key provided)
-        2. Forex Factory
-        3. Manual fallback
 
         Args:
             force: Force refresh even if cache is valid
 
         Returns:
-            List of economic events
         """
         now = datetime.utcnow()
 
@@ -91,100 +66,11 @@ class EconomicCalendar:
             if now - self._last_fetch < self.CACHE_DURATION:
                 return self._events
 
-        events = []
-
-        # Try Finnhub first (most reliable)
-        if self._finnhub_api_key:
-            try:
-                events = self._fetch_finnhub()
-                logger.info(f"Fetched {len(events)} events from Finnhub")
-            except Exception as e:
-                logger.warning(f"Finnhub fetch failed: {e}")
-
-        # Try Forex Factory as backup
-        if not events:
-            try:
-                events = self._fetch_forex_factory()
-                logger.info(f"Fetched {len(events)} events from Forex Factory")
-            except Exception as e:
-                logger.debug(f"Forex Factory fetch failed: {e}")
-
-        # Use manual fallback if all else fails
-        if not events:
-            events = self._get_manual_events()
-            logger.info("Using manual event fallback")
-
-        if events:
+        try:
+            events = self._fetch_forex_factory()
             self._events = events
             self._last_fetch = now
-
-        return self._events
-
-    def _fetch_finnhub(self) -> list[EconomicEvent]:
-        """Fetch events from Finnhub API."""
-        if not self._finnhub_api_key:
-            return []
-
-        now = datetime.utcnow()
-        from_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-        to_date = (now + timedelta(days=7)).strftime("%Y-%m-%d")
-
-        response = self._http_client.get(
-            self.FINNHUB_URL,
-            params={
-                "from": from_date,
-                "to": to_date,
-                "token": self._finnhub_api_key,
-            }
-        )
-        response.raise_for_status()
-        data = response.json()
-
-        events = []
-        for item in data.get("economicCalendar", []):
-            try:
-                event = self._parse_finnhub_event(item)
-                if event:
-                    events.append(event)
-            except Exception as e:
-                logger.debug(f"Failed to parse Finnhub event: {e}")
-
-        return events
-
-    def _parse_finnhub_event(self, item: dict) -> Optional[EconomicEvent]:
-        """Parse event from Finnhub response."""
-        # Map Finnhub impact (1=low, 2=medium, 3=high)
-        impact_map = {1: Impact.LOW, 2: Impact.MEDIUM, 3: Impact.HIGH}
-        impact = impact_map.get(item.get("impact", 1), Impact.LOW)
-
-        # Parse timestamp
-        time_str = item.get("time", "")
-        if not time_str:
-            return None
-
-        try:
-            timestamp = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
-            timestamp = timestamp.replace(tzinfo=None)  # Remove timezone for consistency
-        except ValueError:
-            return None
-
-        # Get currency from country code
-        country = item.get("country", "")
-        currency_map = {
-            "US": "USD", "EU": "EUR", "GB": "GBP", "JP": "JPY",
-            "AU": "AUD", "CA": "CAD", "CH": "CHF", "NZ": "NZD",
-            "CN": "CNY", "DE": "EUR", "FR": "EUR", "IT": "EUR",
-        }
-        currency = currency_map.get(country, country)
-
-        return EconomicEvent(
-            title=item.get("event", "Unknown"),
-            currency=currency,
-            timestamp=timestamp,
-            impact=impact,
-            forecast=str(item.get("estimate", "")) if item.get("estimate") else None,
-            previous=str(item.get("prev", "")) if item.get("prev") else None,
-        )
+            return self._events
 
     def _fetch_forex_factory(self) -> list[EconomicEvent]:
         """Parse Forex Factory XML feed."""
@@ -196,7 +82,6 @@ class EconomicCalendar:
 
         for event_elem in root.findall(".//event"):
             try:
-                event = self._parse_ff_event(event_elem)
                 if event:
                     events.append(event)
             except Exception as e:
@@ -205,8 +90,6 @@ class EconomicCalendar:
 
         return events
 
-    def _parse_ff_event(self, elem: ET.Element) -> Optional[EconomicEvent]:
-        """Parse single event from Forex Factory XML element."""
         title = elem.findtext("title", "")
         currency = elem.findtext("country", "")
         date_str = elem.findtext("date", "")
@@ -227,15 +110,12 @@ class EconomicCalendar:
                 timestamp = datetime.strptime(datetime_str, "%m-%d-%Y %I:%M%p")
             else:
                 timestamp = datetime.strptime(datetime_str, "%m-%d-%Y %H:%M")
-            timestamp = timestamp + timedelta(hours=5)  # ET to UTC
-        except ValueError:
             return None
 
         impact_map = {
             "high": Impact.HIGH,
             "medium": Impact.MEDIUM,
             "low": Impact.LOW,
-            "holiday": Impact.HIGH,
         }
         impact = impact_map.get(impact_str.lower(), Impact.LOW)
 
@@ -247,49 +127,6 @@ class EconomicCalendar:
             forecast=elem.findtext("forecast"),
             previous=elem.findtext("previous"),
         )
-
-    def _get_manual_events(self) -> list[EconomicEvent]:
-        """Generate placeholder events for known recurring high-impact events.
-
-        This is a fallback when API sources fail.
-        Creates events for the current week based on typical schedules.
-        """
-        events = []
-        now = datetime.utcnow()
-
-        # Major recurring events (approximate schedules)
-        # These are placeholders - actual timing varies
-        weekly_events = [
-            # US - typically released at specific times
-            ("US Jobless Claims", "USD", Impact.MEDIUM, 3, 13, 30),  # Thursday 8:30 ET
-        ]
-
-        # First Friday of month events
-        if now.day <= 7 and now.weekday() == 4:  # First Friday
-            events.append(EconomicEvent(
-                title="Non-Farm Payrolls",
-                currency="USD",
-                timestamp=now.replace(hour=13, minute=30, second=0),
-                impact=Impact.HIGH,
-            ))
-
-        # Add weekly events
-        for title, currency, impact, weekday, hour, minute in weekly_events:
-            # Find next occurrence
-            days_ahead = weekday - now.weekday()
-            if days_ahead < 0:
-                days_ahead += 7
-            event_date = now + timedelta(days=days_ahead)
-            event_time = event_date.replace(hour=hour, minute=minute, second=0)
-
-            events.append(EconomicEvent(
-                title=title,
-                currency=currency,
-                timestamp=event_time,
-                impact=impact,
-            ))
-
-        return events
 
     def get_upcoming_events(
         self,
@@ -335,7 +172,6 @@ class EconomicCalendar:
         self._http_client.close()
 
 
-# Fallback: Known high-impact events for major currencies
 KNOWN_HIGH_IMPACT_EVENTS = [
     # US Events
     ("Non-Farm Payrolls", "USD"),
