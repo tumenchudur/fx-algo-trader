@@ -475,63 +475,52 @@ def validate_config(
 
 @app.command("mt5-status")
 def mt5_status(
-    config: Optional[Path] = typer.Argument(None, help="Path to live trading config YAML (optional)"),
+    config: Path = typer.Argument(..., help="Path to live trading config YAML"),
 ) -> None:
     """
     Check MT5 connection status.
 
-    Tests the connection to MT5 terminal and displays account info.
-    Uses the official MetaTrader5 Python package.
+    Tests the ZeroMQ connection to MT5 and displays account info.
     """
     import yaml
-    from fx_trading.execution.mt5_client import MT5Client
+    from fx_trading.config.models import LiveTradingConfig
+    from fx_trading.execution.mt5_zmq_client import MT5ZmqClient
+
+    if not config.exists():
+        console.print(f"[red]Error: Config file not found: {config}[/red]")
+        raise typer.Exit(1)
 
     console.print(f"\n[bold]Checking MT5 connection...[/bold]\n")
 
-    # Load config if provided
-    mt5_config = None
-    symbols = ["EURUSD"]
+    # Load config
+    with open(config) as f:
+        config_data = yaml.safe_load(f)
 
-    if config and config.exists():
-        from fx_trading.config.models import LiveTradingConfig
-
-        with open(config) as f:
-            config_data = yaml.safe_load(f)
-
-        try:
-            live_config = LiveTradingConfig.model_validate(config_data)
-            mt5_config = live_config.mt5
-            symbols = live_config.symbols
-        except Exception as e:
-            console.print(f"[yellow]Config warning: {e}[/yellow]")
-            console.print("Continuing with default settings...\n")
+    try:
+        live_config = LiveTradingConfig.model_validate(config_data)
+    except Exception as e:
+        console.print(f"[red]Config validation error: {e}[/red]")
+        raise typer.Exit(1)
 
     # Create client
-    if mt5_config:
-        client = MT5Client(
-            path=mt5_config.path,
-            login=mt5_config.login,
-            password=mt5_config.password,
-            server=mt5_config.server,
-            timeout=mt5_config.timeout_ms,
-            portable=mt5_config.portable,
-        )
-        symbol_suffix = mt5_config.symbol_suffix
-    else:
-        client = MT5Client()
-        symbol_suffix = ""
+    mt5_config = live_config.mt5
+    client = MT5ZmqClient(
+        host=mt5_config.zmq_host,
+        push_port=mt5_config.zmq_push_port,
+        pull_port=mt5_config.zmq_pull_port,
+        timeout_ms=mt5_config.timeout_seconds * 1000,
+    )
 
     # Try to connect
-    console.print("Connecting to MT5 terminal...")
+    console.print(f"Connecting to {mt5_config.zmq_host}:{mt5_config.zmq_push_port}...")
 
     if not client.connect():
         console.print("[red]Failed to connect to MT5[/red]")
         console.print("\n[yellow]Troubleshooting:[/yellow]")
-        console.print("  1. Is MT5 terminal running on this machine?")
-        console.print("  2. Is the MetaTrader5 Python package installed?")
-        console.print("     pip install MetaTrader5")
-        console.print("  3. Are you running on Windows? (required for MT5)")
-        console.print("  4. Try restarting the MT5 terminal")
+        console.print("  1. Is MT5 terminal running on the target machine?")
+        console.print("  2. Is the DWX EA attached to a chart and enabled?")
+        console.print("  3. Are ports 32768/32769 accessible (firewall)?")
+        console.print(f"  4. Is the host '{mt5_config.zmq_host}' correct?")
         raise typer.Exit(1)
 
     console.print("[green]Connected to MT5![/green]\n")
@@ -544,9 +533,7 @@ def mt5_status(
         table.add_column("Value", style="green")
 
         table.add_row("Login", str(account.get("login", "N/A")))
-        table.add_row("Name", str(account.get("name", "N/A")))
         table.add_row("Server", str(account.get("server", "N/A")))
-        table.add_row("Currency", str(account.get("currency", "N/A")))
         table.add_row("Balance", f"${account.get('balance', 0):,.2f}")
         table.add_row("Equity", f"${account.get('equity', 0):,.2f}")
         table.add_row("Margin", f"${account.get('margin', 0):,.2f}")
@@ -555,22 +542,21 @@ def mt5_status(
 
         console.print(table)
 
-    # Get open positions
-    positions = client.get_open_positions()
-    if positions:
-        console.print(f"\n[bold]Open Positions: {len(positions)}[/bold]")
-        for pos in positions:
+    # Get open trades
+    trades = client.get_open_trades()
+    if trades:
+        console.print(f"\n[bold]Open Positions: {len(trades)}[/bold]")
+        for ticket, trade in trades.items():
             console.print(
-                f"  {pos['ticket']}: {pos['symbol']} {pos['type']} "
-                f"{pos['volume']} lots @ {pos['price_open']:.5f} "
-                f"(PnL: ${pos['profit']:.2f})"
+                f"  {ticket}: {trade.get('symbol')} {trade.get('type')} "
+                f"{trade.get('lots')} lots @ {trade.get('open_price')}"
             )
     else:
         console.print("\n[dim]No open positions[/dim]")
 
     # Test tick data
-    for symbol in symbols:
-        mt5_symbol = f"{symbol}{symbol_suffix}"
+    for symbol in live_config.symbols:
+        mt5_symbol = f"{symbol}{mt5_config.symbol_suffix}"
         tick = client.get_tick(mt5_symbol)
         if tick:
             console.print(
@@ -578,7 +564,7 @@ def mt5_status(
                 f"Bid={tick.get('bid'):.5f} Ask={tick.get('ask'):.5f}"
             )
         else:
-            console.print(f"\n[yellow]{mt5_symbol}: No tick data (check symbol name)[/yellow]")
+            console.print(f"\n[yellow]{mt5_symbol}: No tick data[/yellow]")
 
     client.disconnect()
     console.print("\n[green]MT5 connection test complete![/green]")
@@ -598,12 +584,11 @@ def live_trade(
     Start live/demo trading with MT5.
 
     IMPORTANT: Start with a demo account only!
-    Uses the official MetaTrader5 Python package.
     """
     import yaml
     from fx_trading.config.models import LiveTradingConfig
-    from fx_trading.execution.mt5_client import MT5Client
-    from fx_trading.execution.mt5_broker import MT5Broker
+    from fx_trading.execution.mt5_zmq_client import MT5ZmqClient
+    from fx_trading.execution.mt5_broker import MT5ZmqBroker
     from fx_trading.portfolio.accounting import PortfolioManager
     from fx_trading.risk.engine import RiskEngine
     from fx_trading.strategies.base import StrategyFactory
@@ -646,41 +631,29 @@ def live_trade(
         console.print(f"[red]Config validation error: {e}[/red]")
         raise typer.Exit(1)
 
-    # Setup logging with file output
+    # Setup logging
     log_level = "DEBUG" if verbose else live_config.log_level
-    log_dir = Path("logs")
-    setup_logging(
-        log_dir=log_dir,
-        level=log_level,
-        run_id=live_config.run_id,
-    )
-    console.print(f"[dim]Logs saved to: {log_dir.absolute()}[/dim]")
+    setup_logging(level=log_level)
 
     # Create MT5 client and broker
     mt5_config = live_config.mt5
-    client = MT5Client(
-        path=mt5_config.path,
-        login=mt5_config.login,
-        password=mt5_config.password,
-        server=mt5_config.server,
-        timeout=mt5_config.timeout_ms,
-        portable=mt5_config.portable,
+    client = MT5ZmqClient(
+        host=mt5_config.zmq_host,
+        push_port=mt5_config.zmq_push_port,
+        pull_port=mt5_config.zmq_pull_port,
+        timeout_ms=mt5_config.timeout_seconds * 1000,
     )
 
-    broker = MT5Broker(
+    broker = MT5ZmqBroker(
         client=client,
         symbol_suffix=mt5_config.symbol_suffix,
         magic_number=mt5_config.magic_number,
     )
 
     # Connect to MT5
-    console.print("Connecting to MT5 terminal...")
+    console.print("Connecting to MT5...")
     if not broker.connect():
         console.print("[red]Failed to connect to MT5[/red]")
-        console.print("\n[yellow]Troubleshooting:[/yellow]")
-        console.print("  1. Is MT5 terminal running?")
-        console.print("  2. pip install MetaTrader5")
-        console.print("  3. Windows only - are you on Windows?")
         raise typer.Exit(1)
 
     console.print("[green]Connected to MT5![/green]")
@@ -719,341 +692,6 @@ def live_trade(
     except KeyboardInterrupt:
         console.print("\n[yellow]Stopping live trading...[/yellow]")
         runner.stop()
-
-
-@app.command("calendar")
-def economic_calendar(
-    hours: int = typer.Option(24, "--hours", "-h", help="Hours to look ahead"),
-    currency: Optional[str] = typer.Option(
-        None,
-        "--currency",
-        "-c",
-        help="Filter by currency (e.g., USD, EUR)",
-    ),
-    all_impacts: bool = typer.Option(
-        False,
-        "--all",
-        "-a",
-        help="Show all impact levels (default: high only)",
-    ),
-) -> None:
-    """
-    Show upcoming economic calendar events.
-
-    Displays high-impact news events that may affect trading.
-    """
-    from fx_trading.data.economic_calendar import EconomicCalendar, Impact
-
-    console.print(f"\n[bold]Economic Calendar - Next {hours} hours[/bold]\n")
-
-    calendar = EconomicCalendar()
-
-    try:
-        min_impact = Impact.LOW if all_impacts else Impact.HIGH
-        currencies = [currency.upper()] if currency else None
-
-        events = calendar.get_upcoming_events(
-            hours_ahead=hours,
-            min_impact=min_impact,
-            currencies=currencies,
-        )
-
-        if not events:
-            console.print("[dim]No upcoming high-impact events[/dim]")
-            return
-
-        table = Table(title=f"Upcoming Events ({len(events)})")
-        table.add_column("Time (UTC)", style="cyan")
-        table.add_column("Currency", style="yellow")
-        table.add_column("Impact", style="white")
-        table.add_column("Event", style="green")
-
-        for event in events:
-            impact_style = {
-                Impact.HIGH: "[bold red]HIGH[/bold red]",
-                Impact.MEDIUM: "[yellow]MEDIUM[/yellow]",
-                Impact.LOW: "[dim]LOW[/dim]",
-            }.get(event.impact, "")
-
-            table.add_row(
-                event.timestamp.strftime("%m/%d %H:%M"),
-                event.currency,
-                impact_style,
-                event.title,
-            )
-
-        console.print(table)
-
-        console.print("\n[dim]Tip: Use --all to show all impact levels[/dim]")
-        console.print("[dim]News filter blocks trading 30min before, 15min after high-impact events[/dim]")
-
-    except Exception as e:
-        console.print(f"[yellow]Could not fetch calendar: {e}[/yellow]")
-        console.print("[dim]Make sure you have internet connectivity[/dim]")
-    finally:
-        calendar.close()
-
-
-@app.command("live-report")
-def live_report(
-    days: int = typer.Option(7, "--days", "-d", help="Number of days to include"),
-    output: Path = typer.Option(Path("live_report.html"), "--output", "-o", help="Output file path"),
-) -> None:
-    """
-    Generate HTML report from MT5 live trading history.
-
-    Fetches trade history from MT5 and generates a detailed report.
-    """
-    from datetime import datetime, timedelta
-    from fx_trading.execution.mt5_client import MT5Client
-
-    console.print(f"\n[bold]Generating Live Trading Report[/bold]\n")
-    console.print(f"Fetching trades from last {days} days...\n")
-
-    client = MT5Client()
-    if not client.connect():
-        console.print("[red]Failed to connect to MT5[/red]")
-        console.print("Make sure MT5 is running and logged in.")
-        raise typer.Exit(1)
-
-    try:
-        # Get account info
-        account = client.get_account_info()
-
-        # Get trade history
-        deals = client.get_history_deals(
-            from_date=datetime.now() - timedelta(days=days),
-            to_date=datetime.now(),
-        )
-
-        # Filter to actual trades (not balance operations)
-        trades = [d for d in deals if d.get("symbol")]
-
-        # Calculate statistics
-        total_profit = sum(d.get("profit", 0) for d in trades)
-        total_commission = sum(d.get("commission", 0) for d in trades)
-        total_swap = sum(d.get("swap", 0) for d in trades)
-        net_profit = total_profit + total_commission + total_swap
-
-        winners = [d for d in trades if d.get("profit", 0) > 0]
-        losers = [d for d in trades if d.get("profit", 0) < 0]
-        win_rate = len(winners) / len(trades) * 100 if trades else 0
-
-        avg_win = sum(d.get("profit", 0) for d in winners) / len(winners) if winners else 0
-        avg_loss = sum(d.get("profit", 0) for d in losers) / len(losers) if losers else 0
-        profit_factor = abs(sum(d.get("profit", 0) for d in winners) / sum(d.get("profit", 0) for d in losers)) if losers and sum(d.get("profit", 0) for d in losers) != 0 else 0
-
-        # Generate HTML
-        html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>Live Trading Report</title>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background: #f5f5f5;
-        }}
-        .header {{
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            color: white;
-            padding: 30px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-        }}
-        .header h1 {{ margin: 0; font-size: 28px; }}
-        .header .subtitle {{ opacity: 0.8; margin-top: 10px; }}
-        .card {{
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-        }}
-        .card h2 {{
-            margin-top: 0;
-            color: #333;
-            border-bottom: 2px solid #eee;
-            padding-bottom: 10px;
-        }}
-        .metrics-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 15px;
-        }}
-        .metric {{
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-            text-align: center;
-        }}
-        .metric-value {{
-            font-size: 24px;
-            font-weight: bold;
-            color: #333;
-        }}
-        .metric-value.positive {{ color: #28a745; }}
-        .metric-value.negative {{ color: #dc3545; }}
-        .metric-label {{
-            font-size: 12px;
-            color: #666;
-            margin-top: 5px;
-        }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 15px;
-        }}
-        th, td {{
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #eee;
-        }}
-        th {{ background: #f8f9fa; font-weight: 600; }}
-        tr:hover {{ background: #f8f9fa; }}
-        .profit {{ color: #28a745; font-weight: bold; }}
-        .loss {{ color: #dc3545; font-weight: bold; }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>Live Trading Report</h1>
-        <div class="subtitle">
-            Account: {account.get('login', 'N/A')} | Server: {account.get('server', 'N/A')} |
-            Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}
-        </div>
-    </div>
-
-    <div class="card">
-        <h2>Account Summary</h2>
-        <div class="metrics-grid">
-            <div class="metric">
-                <div class="metric-value">${account.get('balance', 0):,.2f}</div>
-                <div class="metric-label">Balance</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value">${account.get('equity', 0):,.2f}</div>
-                <div class="metric-label">Equity</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value {'positive' if net_profit >= 0 else 'negative'}">${net_profit:+,.2f}</div>
-                <div class="metric-label">Net P/L ({days} days)</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value">{account.get('leverage', 0)}:1</div>
-                <div class="metric-label">Leverage</div>
-            </div>
-        </div>
-    </div>
-
-    <div class="card">
-        <h2>Trading Statistics</h2>
-        <div class="metrics-grid">
-            <div class="metric">
-                <div class="metric-value">{len(trades)}</div>
-                <div class="metric-label">Total Trades</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value">{len(winners)}</div>
-                <div class="metric-label">Winners</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value">{len(losers)}</div>
-                <div class="metric-label">Losers</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value {'positive' if win_rate >= 50 else 'negative'}">{win_rate:.1f}%</div>
-                <div class="metric-label">Win Rate</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value positive">${avg_win:,.2f}</div>
-                <div class="metric-label">Avg Win</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value negative">${avg_loss:,.2f}</div>
-                <div class="metric-label">Avg Loss</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value">{profit_factor:.2f}</div>
-                <div class="metric-label">Profit Factor</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value">${total_commission:,.2f}</div>
-                <div class="metric-label">Commissions</div>
-            </div>
-        </div>
-    </div>
-
-    <div class="card">
-        <h2>Trade History</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Time</th>
-                    <th>Symbol</th>
-                    <th>Type</th>
-                    <th>Volume</th>
-                    <th>Price</th>
-                    <th>P/L</th>
-                </tr>
-            </thead>
-            <tbody>
-"""
-
-        for trade in sorted(trades, key=lambda x: x.get("time", datetime.now()), reverse=True):
-            trade_time = trade.get("time", datetime.now())
-            if isinstance(trade_time, datetime):
-                time_str = trade_time.strftime("%Y-%m-%d %H:%M")
-            else:
-                time_str = str(trade_time)
-
-            profit = trade.get("profit", 0)
-            profit_class = "profit" if profit >= 0 else "loss"
-
-            html += f"""                <tr>
-                    <td>{time_str}</td>
-                    <td>{trade.get('symbol', '')}</td>
-                    <td>{trade.get('type', '').upper()}</td>
-                    <td>{trade.get('volume', 0):.2f}</td>
-                    <td>{trade.get('price', 0):.5f}</td>
-                    <td class="{profit_class}">${profit:+,.2f}</td>
-                </tr>
-"""
-
-        html += """            </tbody>
-        </table>
-    </div>
-
-    <div style="text-align: center; color: #666; margin-top: 20px; font-size: 12px;">
-        Generated by FX Trading System
-    </div>
-</body>
-</html>"""
-
-        # Write file
-        with open(output, "w") as f:
-            f.write(html)
-
-        console.print(f"[green]Report generated: {output}[/green]")
-        console.print(f"\nOpen in browser: file:///{output.absolute()}")
-
-        # Print summary
-        table = Table(title="Quick Summary")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="white")
-
-        table.add_row("Total Trades", str(len(trades)))
-        table.add_row("Win Rate", f"{win_rate:.1f}%")
-        table.add_row("Net P/L", f"${net_profit:+,.2f}")
-        table.add_row("Profit Factor", f"{profit_factor:.2f}")
-        table.add_row("Balance", f"${account.get('balance', 0):,.2f}")
-
-        console.print(table)
-
-    finally:
-        client.disconnect()
 
 
 @app.command()

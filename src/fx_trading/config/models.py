@@ -48,15 +48,15 @@ class RiskConfig(BaseModel):
     max_position_size_lots: float = Field(default=10.0, gt=0, description="Max lot size per position")
     min_position_size_lots: float = Field(default=0.01, gt=0, description="Min lot size (micro lots)")
 
-    # Portfolio risk limits (high limits for leveraged trading)
+    # Portfolio risk limits
     max_open_positions: int = Field(default=5, ge=1, description="Max concurrent open positions")
-    max_exposure_per_currency_pct: float = Field(default=20.0, gt=0, description="Max % exposure to single currency")
+    max_exposure_per_currency_pct: float = Field(default=20.0, gt=0, le=100.0, description="Max % exposure to single currency")
     max_total_exposure_pct: float = Field(default=100.0, gt=0, description="Max total exposure as % of equity")
-    max_leverage: float = Field(default=10.0, ge=1.0, le=100.0, description="Max allowed leverage")
+    max_leverage: float = Field(default=10.0, ge=1.0, le=50.0, description="Max allowed leverage")
 
-    # Kill switches (higher limits allowed for demo/small accounts)
-    daily_loss_limit_pct: float = Field(default=3.0, gt=0, le=25.0, description="Stop trading if daily loss exceeds %")
-    max_drawdown_pct: float = Field(default=10.0, gt=0, le=50.0, description="Kill switch: max drawdown %")
+    # Kill switches
+    daily_loss_limit_pct: float = Field(default=3.0, gt=0, le=10.0, description="Stop trading if daily loss exceeds %")
+    max_drawdown_pct: float = Field(default=10.0, gt=0, le=30.0, description="Kill switch: max drawdown %")
     close_positions_on_kill: bool = Field(default=True, description="Close all positions when kill switch triggers")
 
     # Market condition filters
@@ -231,66 +231,23 @@ class MT5Config(BaseModel):
     """
     MetaTrader 5 connection configuration.
 
-    Uses the official MetaTrader5 Python package for direct connection.
-    Requires MT5 terminal running on the same Windows machine.
-
-    See: https://www.mql5.com/en/docs/python_metatrader5
+    Uses ZeroMQ bridge to connect to MT5 running on Windows.
+    See: https://github.com/darwinex/dwxconnect
     """
 
-    # Connection settings (all optional - uses terminal defaults if not specified)
-    path: Optional[str] = Field(default=None, description="Path to MT5 terminal (auto-detect if None)")
-    login: Optional[int] = Field(default=None, description="Account login number (use terminal's default if None)")
-    password: Optional[str] = Field(default=None, description="Account password (use saved if None)")
-    server: Optional[str] = Field(default=None, description="Broker server name")
-    timeout_ms: int = Field(default=60000, ge=1000, description="Connection timeout in milliseconds")
-    portable: bool = Field(default=False, description="Use portable mode")
+    # ZeroMQ connection settings
+    zmq_host: str = Field(default="localhost", description="MT5 machine hostname/IP")
+    zmq_push_port: int = Field(default=32768, description="ZMQ PUSH port (commands to MT5)")
+    zmq_pull_port: int = Field(default=32769, description="ZMQ PULL port (data from MT5)")
+    timeout_seconds: int = Field(default=30, ge=1, description="Socket timeout")
 
     # Trading settings
     symbol_suffix: str = Field(default="", description="Suffix for symbols (e.g., 'm' for micro accounts)")
     magic_number: int = Field(default=123456, description="Magic number for identifying our trades")
 
-
-class NewsFilterConfig(BaseModel):
-    """
-    News filter configuration for blocking trades around economic events.
-
-    Prevents trading during high-impact news to avoid volatility spikes.
-
-    Get a free Finnhub API key at: https://finnhub.io/
-    """
-
-    enabled: bool = Field(default=True, description="Enable news filter")
-    minutes_before: int = Field(default=30, ge=0, description="Stop trading X min before event")
-    minutes_after: int = Field(default=15, ge=0, description="Resume trading X min after event")
-    min_impact: Literal["low", "medium", "high"] = Field(default="high", description="Minimum impact level to filter")
-    currencies: Optional[list[str]] = Field(default=None, description="Currencies to monitor (None=all in traded pairs)")
-    block_modifications: bool = Field(default=False, description="Also block SL/TP modifications")
-
-    # API key for economic calendar (get free at https://finnhub.io/)
-    finnhub_api_key: Optional[str] = Field(default=None, description="Finnhub API key for reliable calendar data")
-
-
-class TelegramConfig(BaseModel):
-    """
-    Telegram notification configuration.
-
-    Setup:
-    1. Create a bot with @BotFather on Telegram - send /newbot
-    2. Copy the bot token you receive
-    3. Get your chat ID by messaging @userinfobot on Telegram
-    4. Add both to your config
-    """
-
-    enabled: bool = Field(default=False, description="Enable Telegram notifications")
-    bot_token: Optional[str] = Field(default=None, description="Bot token from @BotFather")
-    chat_id: Optional[str] = Field(default=None, description="Your Telegram chat ID")
-
-    # Notification settings
-    notify_on_trade: bool = Field(default=True, description="Alert when trade opens")
-    notify_on_close: bool = Field(default=True, description="Alert when trade closes")
-    notify_on_error: bool = Field(default=True, description="Alert on errors")
-    notify_on_kill_switch: bool = Field(default=True, description="Alert when kill switch triggers")
-    notify_daily_summary: bool = Field(default=False, description="Send daily P/L summary")
+    # Reconnection settings
+    retry_attempts: int = Field(default=3, ge=1, description="Max retry attempts on failure")
+    retry_delay_seconds: float = Field(default=5.0, gt=0, description="Delay between retries")
 
 
 class LiveTradingConfig(BaseModel):
@@ -310,12 +267,6 @@ class LiveTradingConfig(BaseModel):
     # Trading settings
     symbols: list[str] = Field(default_factory=lambda: ["EURUSD"])
     poll_interval_seconds: float = Field(default=5.0, gt=0, description="Main loop interval")
-
-    # News filter
-    news_filter: NewsFilterConfig = Field(default_factory=NewsFilterConfig)
-
-    # Telegram notifications
-    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
 
     # Account
     initial_capital: Optional[float] = Field(default=None, description="Override for tracking (uses MT5 balance if None)")
