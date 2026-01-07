@@ -17,6 +17,7 @@ from fx_trading.config.models import LiveTradingConfig
 from fx_trading.execution.broker import Broker
 from fx_trading.portfolio.accounting import PortfolioManager
 from fx_trading.risk.engine import RiskEngine
+from fx_trading.risk.news_filter import NewsFilter, NewsFilterConfig, TradingSchedule, Impact
 from fx_trading.strategies.base import Strategy
 from fx_trading.types.models import Order, OrderType, Side, PriceData
 
@@ -74,6 +75,11 @@ class LiveTradingRunner:
         self.signals_generated = 0
         self.trades_executed = 0
         self.trades_rejected = 0
+        self.trades_blocked_by_news = 0
+
+        # Initialize news filter
+        self.news_filter = self._init_news_filter()
+        self.trading_schedule = TradingSchedule(news_filter=self.news_filter)
 
         # Setup signal handlers for graceful shutdown
         self._setup_signal_handlers()
@@ -86,6 +92,36 @@ class LiveTradingRunner:
             f"Live runner initialized: symbols={config.symbols}, "
             f"poll_interval={config.poll_interval_seconds}s"
         )
+
+    def _init_news_filter(self) -> Optional[NewsFilter]:
+        """Initialize news filter from config."""
+        news_config = self.config.news_filter
+        if not news_config.enabled:
+            logger.info("News filter disabled")
+            return None
+
+        # Map config impact string to Impact enum
+        impact_map = {
+            "low": Impact.LOW,
+            "medium": Impact.MEDIUM,
+            "high": Impact.HIGH,
+        }
+
+        filter_config = NewsFilterConfig(
+            enabled=True,
+            minutes_before=news_config.minutes_before,
+            minutes_after=news_config.minutes_after,
+            min_impact=impact_map.get(news_config.min_impact, Impact.HIGH),
+            currencies=news_config.currencies,
+            block_modifications=news_config.block_modifications,
+        )
+
+        logger.info(
+            f"News filter enabled: block {news_config.minutes_before}min before, "
+            f"{news_config.minutes_after}min after {news_config.min_impact}-impact events"
+        )
+
+        return NewsFilter(filter_config)
 
     def _setup_signal_handlers(self) -> None:
         """Setup handlers for graceful shutdown."""
@@ -168,6 +204,15 @@ class LiveTradingRunner:
 
         # Skip signal generation if we have a position
         if positions:
+            return
+
+        # Check news filter before generating signals
+        schedule_result = self.trading_schedule.can_trade(symbol, current_time)
+        if not schedule_result.allowed:
+            if self.iteration % 60 == 0:  # Log every 60 iterations to avoid spam
+                logger.info(f"Trading paused for {symbol}: {schedule_result.reason}")
+                if schedule_result.resume_time:
+                    logger.info(f"  Resume at: {schedule_result.resume_time.strftime('%H:%M:%S UTC')}")
             return
 
         # Generate signals from strategy
