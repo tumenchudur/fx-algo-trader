@@ -106,6 +106,14 @@ risk:
   no_revenge_trading: true
   revenge_cooldown_bars: 10     # Wait 10 bars after loss
 
+# News filter - blocks trading around high-impact events
+news_filter:
+  enabled: true                 # Set to false to disable
+  minutes_before: 30            # Stop trading 30 min before event
+  minutes_after: 15             # Resume trading 15 min after
+  min_impact: high              # Only filter: low, medium, or high
+  # currencies: ["USD", "EUR"]  # Optional: filter specific currencies
+
 # Safety settings
 max_runtime_hours: null         # null = run until stopped
 close_positions_on_exit: false  # Set to true if you want auto-close

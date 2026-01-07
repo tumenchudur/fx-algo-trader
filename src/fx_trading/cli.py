@@ -694,6 +694,79 @@ def live_trade(
         runner.stop()
 
 
+@app.command("calendar")
+def economic_calendar(
+    hours: int = typer.Option(24, "--hours", "-h", help="Hours to look ahead"),
+    currency: Optional[str] = typer.Option(
+        None,
+        "--currency",
+        "-c",
+        help="Filter by currency (e.g., USD, EUR)",
+    ),
+    all_impacts: bool = typer.Option(
+        False,
+        "--all",
+        "-a",
+        help="Show all impact levels (default: high only)",
+    ),
+) -> None:
+    """
+    Show upcoming economic calendar events.
+
+    Displays high-impact news events that may affect trading.
+    """
+    from fx_trading.data.economic_calendar import EconomicCalendar, Impact
+
+    console.print(f"\n[bold]Economic Calendar - Next {hours} hours[/bold]\n")
+
+    calendar = EconomicCalendar()
+
+    try:
+        min_impact = Impact.LOW if all_impacts else Impact.HIGH
+        currencies = [currency.upper()] if currency else None
+
+        events = calendar.get_upcoming_events(
+            hours_ahead=hours,
+            min_impact=min_impact,
+            currencies=currencies,
+        )
+
+        if not events:
+            console.print("[dim]No upcoming high-impact events[/dim]")
+            return
+
+        table = Table(title=f"Upcoming Events ({len(events)})")
+        table.add_column("Time (UTC)", style="cyan")
+        table.add_column("Currency", style="yellow")
+        table.add_column("Impact", style="white")
+        table.add_column("Event", style="green")
+
+        for event in events:
+            impact_style = {
+                Impact.HIGH: "[bold red]HIGH[/bold red]",
+                Impact.MEDIUM: "[yellow]MEDIUM[/yellow]",
+                Impact.LOW: "[dim]LOW[/dim]",
+            }.get(event.impact, "")
+
+            table.add_row(
+                event.timestamp.strftime("%m/%d %H:%M"),
+                event.currency,
+                impact_style,
+                event.title,
+            )
+
+        console.print(table)
+
+        console.print("\n[dim]Tip: Use --all to show all impact levels[/dim]")
+        console.print("[dim]News filter blocks trading 30min before, 15min after high-impact events[/dim]")
+
+    except Exception as e:
+        console.print(f"[yellow]Could not fetch calendar: {e}[/yellow]")
+        console.print("[dim]Make sure you have internet connectivity[/dim]")
+    finally:
+        calendar.close()
+
+
 @app.command()
 def version() -> None:
     """Show version information."""

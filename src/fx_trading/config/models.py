@@ -250,6 +250,21 @@ class MT5Config(BaseModel):
     retry_delay_seconds: float = Field(default=5.0, gt=0, description="Delay between retries")
 
 
+class NewsFilterConfig(BaseModel):
+    """
+    News filter configuration for blocking trades around economic events.
+
+    Prevents trading during high-impact news to avoid volatility spikes.
+    """
+
+    enabled: bool = Field(default=True, description="Enable news filter")
+    minutes_before: int = Field(default=30, ge=0, description="Stop trading X min before event")
+    minutes_after: int = Field(default=15, ge=0, description="Resume trading X min after event")
+    min_impact: Literal["low", "medium", "high"] = Field(default="high", description="Minimum impact level to filter")
+    currencies: Optional[list[str]] = Field(default=None, description="Currencies to monitor (None=all in traded pairs)")
+    block_modifications: bool = Field(default=False, description="Also block SL/TP modifications")
+
+
 class LiveTradingConfig(BaseModel):
     """
     Live/demo trading configuration.
@@ -267,6 +282,9 @@ class LiveTradingConfig(BaseModel):
     # Trading settings
     symbols: list[str] = Field(default_factory=lambda: ["EURUSD"])
     poll_interval_seconds: float = Field(default=5.0, gt=0, description="Main loop interval")
+
+    # News filter
+    news_filter: NewsFilterConfig = Field(default_factory=NewsFilterConfig)
 
     # Account
     initial_capital: Optional[float] = Field(default=None, description="Override for tracking (uses MT5 balance if None)")
