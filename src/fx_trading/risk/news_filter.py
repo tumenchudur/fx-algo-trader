@@ -40,6 +40,9 @@ class NewsFilterConfig:
     # Whether to also block position modifications (stop loss changes)
     block_modifications: bool = False
 
+    # Finnhub API key for reliable calendar data (get free at https://finnhub.io/)
+    finnhub_api_key: Optional[str] = None
+
 
 @dataclass
 class FilterResult:
@@ -63,7 +66,7 @@ class NewsFilter:
 
     def __init__(self, config: Optional[NewsFilterConfig] = None):
         self.config = config or NewsFilterConfig()
-        self._calendar = EconomicCalendar()
+        self._calendar = EconomicCalendar(finnhub_api_key=self.config.finnhub_api_key)
         self._blocked_until: dict[str, datetime] = {}
 
     def check_trading_allowed(

@@ -71,6 +71,21 @@ logs/
 credentials.json
 secrets.yaml
 
+# Config files with credentials (use .example templates)
+configs/mt5_demo.yaml
+configs/mt5_live.yaml
+configs/*_private.yaml
+
+# Generated reports
+live_report*.html
+
+# Test files
+test_*.py
+nul
+
+# Temp folders
+tmpclaude-*
+
 # OS
 .DS_Store
 Thumbs.db
