@@ -15,6 +15,7 @@ from loguru import logger
 
 from fx_trading.config.models import LiveTradingConfig
 from fx_trading.execution.broker import Broker
+from fx_trading.notifications.telegram import TelegramNotifier
 from fx_trading.portfolio.accounting import PortfolioManager
 from fx_trading.risk.engine import RiskEngine
 from fx_trading.risk.news_filter import NewsFilter, NewsFilterConfig, TradingSchedule, Impact
@@ -81,6 +82,9 @@ class LiveTradingRunner:
         self.news_filter = self._init_news_filter()
         self.trading_schedule = TradingSchedule(news_filter=self.news_filter)
 
+        # Initialize Telegram notifier
+        self.telegram = self._init_telegram()
+
         # Setup signal handlers for graceful shutdown
         self._setup_signal_handlers()
 
@@ -114,6 +118,7 @@ class LiveTradingRunner:
             min_impact=impact_map.get(news_config.min_impact, Impact.HIGH),
             currencies=news_config.currencies,
             block_modifications=news_config.block_modifications,
+            finnhub_api_key=news_config.finnhub_api_key,
         )
 
         logger.info(
@@ -122,6 +127,25 @@ class LiveTradingRunner:
         )
 
         return NewsFilter(filter_config)
+
+    def _init_telegram(self) -> Optional[TelegramNotifier]:
+        """Initialize Telegram notifier from config."""
+        tg_config = self.config.telegram
+        if not tg_config.enabled:
+            logger.info("Telegram notifications disabled")
+            return None
+
+        if not tg_config.bot_token or not tg_config.chat_id:
+            logger.warning("Telegram enabled but missing bot_token or chat_id")
+            return None
+
+        notifier = TelegramNotifier(
+            bot_token=tg_config.bot_token,
+            chat_id=tg_config.chat_id,
+            enabled=True,
+        )
+        logger.info("Telegram notifications enabled")
+        return notifier
 
     def _setup_signal_handlers(self) -> None:
         """Setup handlers for graceful shutdown."""
@@ -147,6 +171,15 @@ class LiveTradingRunner:
         logger.info(f"Symbols: {self.config.symbols}")
         logger.info(f"Strategy: {self.strategy.config.name}")
         logger.info("=" * 60)
+
+        # Send Telegram startup notification
+        if self.telegram:
+            account = self.broker.get_account()
+            self.telegram.startup_message(
+                symbols=self.config.symbols,
+                strategy=self.strategy.config.name,
+                equity=account.equity if account else 0,
+            )
 
         try:
             while self.running:
@@ -258,6 +291,16 @@ class LiveTradingRunner:
                     f"Order filled: {symbol} {signal.side.value} "
                     f"size={order.size} @ {fill.fill_price}"
                 )
+                # Send Telegram notification
+                if self.telegram and self.config.telegram.notify_on_trade:
+                    self.telegram.trade_opened(
+                        symbol=symbol,
+                        side=signal.side.value,
+                        size=order.size,
+                        price=fill.fill_price,
+                        sl=order.stop_loss,
+                        tp=order.take_profit,
+                    )
 
     def _check_position_exits(self, position, price_data: PriceData) -> None:
         """Check if position should be closed."""
@@ -267,13 +310,35 @@ class LiveTradingRunner:
         # Check stop loss
         if position.check_stop_loss(price_data.bid, price_data.ask):
             logger.info(f"Stop loss triggered for {position.symbol}")
+            exit_price = price_data.bid if position.side.value == "BUY" else price_data.ask
             self.broker.close_position(position.id)
+            # Send Telegram notification
+            if self.telegram and self.config.telegram.notify_on_close:
+                self.telegram.trade_closed(
+                    symbol=position.symbol,
+                    side=position.side.value,
+                    size=position.size,
+                    entry_price=position.entry_price,
+                    exit_price=exit_price,
+                    profit=position.unrealized_pnl,
+                )
             return
 
         # Check take profit
         if position.check_take_profit(price_data.bid, price_data.ask):
             logger.info(f"Take profit triggered for {position.symbol}")
+            exit_price = price_data.bid if position.side.value == "BUY" else price_data.ask
             self.broker.close_position(position.id)
+            # Send Telegram notification
+            if self.telegram and self.config.telegram.notify_on_close:
+                self.telegram.trade_closed(
+                    symbol=position.symbol,
+                    side=position.side.value,
+                    size=position.size,
+                    entry_price=position.entry_price,
+                    exit_price=exit_price,
+                    profit=position.unrealized_pnl,
+                )
             return
 
     def _store_price(self, symbol: str, price_data: PriceData) -> None:
@@ -341,6 +406,11 @@ class LiveTradingRunner:
         """Shutdown procedure."""
         logger.info("=" * 60)
         logger.info("SHUTTING DOWN")
+
+        # Send Telegram shutdown notification
+        if self.telegram:
+            self.telegram.shutdown_message("Trading stopped")
+            self.telegram.close()
 
         # Close positions if configured
         if self.config.close_positions_on_exit:

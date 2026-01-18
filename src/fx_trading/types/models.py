@@ -72,8 +72,16 @@ class PriceData:
 
     @property
     def spread_pips(self) -> float:
-        """Return spread in pips (assumes 4 decimal places for most pairs)."""
-        return self.spread * 10000
+        """Return spread in pips based on symbol type."""
+        if "XAU" in self.symbol or "GOLD" in self.symbol.upper():
+            # Gold: 2 decimal places, pip = $0.01
+            return self.spread * 100
+        elif "JPY" in self.symbol:
+            # JPY pairs: 2 decimal places
+            return self.spread * 100
+        else:
+            # Standard forex: 4 decimal places
+            return self.spread * 10000
 
     def is_stale(self, current_time: datetime, max_age_seconds: float) -> bool:
         """Check if price data is stale."""

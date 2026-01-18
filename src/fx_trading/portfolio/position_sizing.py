@@ -85,7 +85,12 @@ class PositionSizer:
 
         # For pairs where quote currency != account currency, would need conversion
         # Simplified: assume USD account and major pairs
-        if "JPY" in symbol:
+        if "XAU" in symbol or "GOLD" in symbol.upper():
+            # Gold: 1 lot = 100 oz, pip = $0.01, so $1 per pip per lot
+            pip_value_per_lot = 1.0
+            # Recalculate sl_pips for gold (pip = $0.01)
+            sl_pips = sl_distance / 0.01
+        elif "JPY" in symbol:
             # JPY pip value different
             pip_value_per_lot = 100000 * 0.01 / entry_price  # Approximate conversion
         else:
@@ -124,8 +129,13 @@ class PositionSizer:
         """
         risk_amount = equity * (self.config.max_risk_per_trade_pct / 100)
 
-        # Pip value per lot (simplified)
-        pip_value_per_lot = 10 if "JPY" not in symbol else 1000 / 150  # Approximate
+        # Pip value per lot based on symbol type
+        if "XAU" in symbol or "GOLD" in symbol.upper():
+            pip_value_per_lot = 1.0  # Gold: $1 per pip per lot
+        elif "JPY" in symbol:
+            pip_value_per_lot = 1000 / 150  # Approximate for JPY pairs
+        else:
+            pip_value_per_lot = 10  # Standard forex pairs
 
         size = risk_amount / (risk_pips * pip_value_per_lot)
         return self._constrain_size(size)
@@ -153,7 +163,13 @@ class PositionSizer:
         Returns:
             Position size in lots
         """
-        pip_value = 0.01 if "JPY" in symbol else 0.0001
+        # Determine pip value based on symbol type
+        if "XAU" in symbol or "GOLD" in symbol.upper():
+            pip_value = 0.01  # Gold pip = $0.01
+        elif "JPY" in symbol:
+            pip_value = 0.01  # JPY pairs
+        else:
+            pip_value = 0.0001  # Standard forex
 
         # SL distance = ATR * multiplier
         sl_distance = atr * atr_multiplier

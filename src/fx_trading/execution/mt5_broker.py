@@ -1,8 +1,8 @@
 """
-MetaTrader 5 Broker via ZeroMQ Bridge.
+MetaTrader 5 Broker using the official Python package.
 
 Implements the Broker interface for live/demo trading with MT5.
-Requires the DWX ZeroMQ Expert Advisor running in MT5.
+Requires the MetaTrader5 Python package and MT5 terminal running on Windows.
 """
 
 from datetime import datetime
@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 from loguru import logger
 
 from fx_trading.execution.broker import Broker
-from fx_trading.execution.mt5_zmq_client import MT5ZmqClient
+from fx_trading.execution.mt5_client import MT5Client
 from fx_trading.types.models import (
     Order,
     Fill,
@@ -26,17 +26,17 @@ from fx_trading.types.models import (
 )
 
 
-class MT5ZmqBroker(Broker):
+class MT5Broker(Broker):
     """
-    MetaTrader 5 broker via ZeroMQ bridge.
+    MetaTrader 5 broker using official Python package.
 
     Translates between the internal trading system models and
-    the DWX protocol used by MT5.
+    the MT5 Python API.
     """
 
     def __init__(
         self,
-        client: MT5ZmqClient,
+        client: MT5Client,
         symbol_suffix: str = "",
         magic_number: int = 123456,
     ):
@@ -44,7 +44,7 @@ class MT5ZmqBroker(Broker):
         Initialize MT5 broker.
 
         Args:
-            client: ZeroMQ client for MT5 communication
+            client: MT5 client instance
             symbol_suffix: Suffix to add to symbols (e.g., "m" for micro)
             magic_number: Magic number for identifying our trades
         """
@@ -68,7 +68,7 @@ class MT5ZmqBroker(Broker):
         self._account_state: Optional[AccountState] = None
 
     def connect(self) -> bool:
-        """Connect to MT5 via ZeroMQ."""
+        """Connect to MT5."""
         if not self.client.connect():
             return False
 
@@ -93,7 +93,7 @@ class MT5ZmqBroker(Broker):
     def _internal_symbol(self, mt5_symbol: str) -> str:
         """Convert MT5 symbol to internal format."""
         if self.symbol_suffix and mt5_symbol.endswith(self.symbol_suffix):
-            return mt5_symbol[:-len(self.symbol_suffix)]
+            return mt5_symbol[: -len(self.symbol_suffix)]
         return mt5_symbol
 
     def get_prices(self, symbol: str) -> Optional[PriceData]:
@@ -107,7 +107,7 @@ class MT5ZmqBroker(Broker):
 
         try:
             return PriceData(
-                timestamp=datetime.utcnow(),
+                timestamp=tick.get("time", datetime.utcnow()),
                 symbol=symbol,
                 bid=float(tick.get("bid", 0)),
                 ask=float(tick.get("ask", 0)),
@@ -146,32 +146,32 @@ class MT5ZmqBroker(Broker):
 
         # Determine order type
         if order.side == Side.LONG:
-            order_type = "BUY"
+            order_type = "buy"
         elif order.side == Side.SHORT:
-            order_type = "SELL"
+            order_type = "sell"
         else:
             logger.error(f"Invalid order side: {order.side}")
             return None
 
         # Place trade in MT5
-        result = self.client.open_trade(
+        result = self.client.open_position(
             symbol=mt5_symbol,
             order_type=order_type,
-            lots=order.size,
-            stop_loss=order.stop_loss or 0.0,
-            take_profit=order.take_profit or 0.0,
+            volume=order.size,
+            sl=order.stop_loss or 0.0,
+            tp=order.take_profit or 0.0,
             magic=self.magic_number,
             comment=f"FX_{order.id}",
         )
 
-        if not result:
+        if not result or not result.get("success"):
             order.status = OrderStatus.REJECTED
-            logger.error(f"Order rejected: {order.id}")
+            logger.error(f"Order rejected: {order.id} - {result}")
             return None
 
         # Extract fill information
         ticket = result.get("ticket")
-        fill_price = result.get("price", result.get("open_price", 0))
+        fill_price = result.get("price", 0)
 
         if not ticket:
             logger.error(f"No ticket in MT5 response: {result}")
@@ -191,7 +191,7 @@ class MT5ZmqBroker(Broker):
             side=order.side,
             size=order.size,
             fill_price=float(fill_price),
-            commission=result.get("commission", 0),
+            commission=0,  # MT5 commission is per-deal, retrieved separately
             is_entry=True,
             metadata={
                 "mt5_ticket": ticket,
@@ -237,7 +237,6 @@ class MT5ZmqBroker(Broker):
         # If we have a ticket, cancel in MT5
         if order_id in self.uuid_to_ticket:
             ticket = self.uuid_to_ticket[order_id]
-            # DWX doesn't have explicit cancel, would need to close
             logger.info(f"Order cancelled: {order_id} (ticket={ticket})")
         else:
             logger.info(f"Order cancelled: {order_id}")
@@ -277,17 +276,27 @@ class MT5ZmqBroker(Broker):
 
         # Close the trade in MT5
         close_size = size or position.size
-        result = self.client.close_trade(
+        result = self.client.close_position(
             ticket=ticket,
-            lots=close_size,
+            volume=close_size,
         )
 
-        if not result:
-            logger.error(f"Failed to close position: {position_id}")
+        if not result or not result.get("success"):
+            # Check if position was already closed by MT5 (SL/TP hit)
+            mt5_positions = self.client.get_open_positions()
+            mt5_tickets = {p["ticket"] for p in mt5_positions} if mt5_positions else set()
+
+            if ticket not in mt5_tickets:
+                # Position was closed by MT5 (SL/TP), clean up our tracking
+                logger.info(f"Position {position_id} was already closed by MT5 (SL/TP hit)")
+                self._remove_position(position_id)
+                return None
+
+            logger.error(f"Failed to close position: {position_id} - {result}")
             return None
 
         # Get close price
-        close_price = result.get("close_price", result.get("price", position.current_price))
+        close_price = result.get("price", position.current_price)
 
         # Create fill for the close
         fill = Fill(
@@ -297,7 +306,7 @@ class MT5ZmqBroker(Broker):
             side=Side.SHORT if position.side == Side.LONG else Side.LONG,
             size=close_size,
             fill_price=float(close_price),
-            commission=result.get("commission", 0),
+            commission=0,
             is_entry=False,
             metadata={
                 "mt5_ticket": ticket,
@@ -324,16 +333,28 @@ class MT5ZmqBroker(Broker):
         fills = []
 
         # Close via MT5
-        result = self.client.close_all_trades()
+        results = self.client.close_all_positions()
+        if results:
+            logger.info(f"All positions close requested: {len(results)} positions")
 
-        if result:
-            logger.info(f"All positions close requested: {result}")
-
-        # Close each position we're tracking
+        # Update our tracking
         for position_id in list(self.positions.keys()):
-            fill = self.close_position(position_id)
-            if fill:
-                fills.append(fill)
+            position = self.positions[position_id]
+            position.status = PositionStatus.CLOSED
+
+            fill = Fill(
+                order_id=uuid4(),
+                timestamp=datetime.utcnow(),
+                symbol=position.symbol,
+                side=Side.SHORT if position.side == Side.LONG else Side.LONG,
+                size=position.size,
+                fill_price=position.current_price,
+                commission=0,
+                is_entry=False,
+                metadata={"close_type": "close_all"},
+            )
+            fills.append(fill)
+            del self.positions[position_id]
 
         return fills
 
@@ -381,40 +402,40 @@ class MT5ZmqBroker(Broker):
 
     def _sync_positions(self) -> None:
         """Sync positions from MT5."""
-        trades = self.client.get_open_trades()
+        positions = self.client.get_open_positions()
 
-        if not trades:
-            logger.info("No open trades in MT5")
+        if not positions:
+            logger.info("No open positions in MT5")
             return
 
-        for ticket_str, trade_info in trades.items():
+        for pos in positions:
             try:
-                ticket = int(ticket_str)
+                ticket = pos["ticket"]
 
                 # Skip if already tracked
                 if ticket in self.ticket_to_uuid:
                     continue
 
                 # Check if it's our trade (magic number)
-                if trade_info.get("magic", 0) != self.magic_number:
+                if pos.get("magic", 0) != self.magic_number:
                     logger.debug(f"Skipping foreign trade: {ticket}")
                     continue
 
                 # Create position from MT5 data
                 position_id = uuid4()
-                symbol = self._internal_symbol(trade_info.get("symbol", ""))
-                side = Side.LONG if trade_info.get("type") == "BUY" else Side.SHORT
+                symbol = self._internal_symbol(pos.get("symbol", ""))
+                side = Side.LONG if pos.get("type") == "buy" else Side.SHORT
 
                 position = Position(
                     id=position_id,
                     symbol=symbol,
                     side=side,
-                    size=float(trade_info.get("lots", 0)),
-                    entry_price=float(trade_info.get("open_price", 0)),
-                    entry_time=datetime.utcnow(),
-                    current_price=float(trade_info.get("open_price", 0)),
-                    stop_loss=float(trade_info.get("SL", 0)) or None,
-                    take_profit=float(trade_info.get("TP", 0)) or None,
+                    size=float(pos.get("volume", 0)),
+                    entry_price=float(pos.get("price_open", 0)),
+                    entry_time=pos.get("time", datetime.utcnow()),
+                    current_price=float(pos.get("price_current", pos.get("price_open", 0))),
+                    stop_loss=float(pos.get("sl", 0)) or None,
+                    take_profit=float(pos.get("tp", 0)) or None,
                     status=PositionStatus.OPEN,
                 )
 
@@ -425,7 +446,19 @@ class MT5ZmqBroker(Broker):
                 logger.info(f"Synced position from MT5: {symbol} {side.value} (ticket={ticket})")
 
             except (ValueError, KeyError) as e:
-                logger.error(f"Error syncing trade {ticket_str}: {e}")
+                logger.error(f"Error syncing trade {pos}: {e}")
+
+    def _remove_position(self, position_id: UUID) -> None:
+        """Remove a position from internal tracking (when closed by MT5 SL/TP)."""
+        if position_id in self.positions:
+            del self.positions[position_id]
+
+        if position_id in self.uuid_to_ticket:
+            ticket = self.uuid_to_ticket.pop(position_id)
+            if ticket in self.ticket_to_uuid:
+                del self.ticket_to_uuid[ticket]
+
+        logger.debug(f"Removed position from tracking: {position_id}")
 
     def update_positions(self) -> None:
         """Update position PnLs from current prices."""
@@ -433,6 +466,43 @@ class MT5ZmqBroker(Broker):
             prices = self.get_prices(position.symbol)
             if prices:
                 position.update_pnl(prices.bid, prices.ask)
+
+    def modify_position_sl_tp(
+        self,
+        position_id: UUID,
+        sl: Optional[float] = None,
+        tp: Optional[float] = None,
+    ) -> bool:
+        """
+        Modify stop loss / take profit for a position.
+
+        Args:
+            position_id: Internal position ID
+            sl: New stop loss price (None = keep current)
+            tp: New take profit price (None = keep current)
+
+        Returns:
+            True if modification successful
+        """
+        ticket = self.uuid_to_ticket.get(position_id)
+        if not ticket:
+            logger.error(f"No MT5 ticket for position: {position_id}")
+            return False
+
+        result = self.client.modify_position(ticket, sl, tp)
+        if not result or not result.get("success"):
+            logger.error(f"Failed to modify position: {position_id} - {result}")
+            return False
+
+        # Update local position
+        position = self.positions.get(position_id)
+        if position:
+            if sl is not None:
+                position.stop_loss = sl
+            if tp is not None:
+                position.take_profit = tp
+
+        return True
 
     def reconcile_with_mt5(self) -> dict[str, list]:
         """
@@ -443,18 +513,18 @@ class MT5ZmqBroker(Broker):
         """
         result = {
             "missing": [],  # In MT5 but not tracked
-            "extra": [],    # Tracked but not in MT5
-            "synced": [],   # Matched
+            "extra": [],  # Tracked but not in MT5
+            "synced": [],  # Matched
         }
 
-        mt5_trades = self.client.get_open_trades() or {}
-        mt5_tickets = {int(t) for t in mt5_trades.keys()}
+        mt5_positions = self.client.get_open_positions()
+        mt5_tickets = {p["ticket"] for p in mt5_positions}
         our_tickets = set(self.uuid_to_ticket.values())
 
         # Find missing (in MT5 but not tracked)
-        for ticket in mt5_tickets - our_tickets:
-            trade = mt5_trades.get(str(ticket), {})
-            if trade.get("magic") == self.magic_number:
+        for pos in mt5_positions:
+            ticket = pos["ticket"]
+            if ticket not in our_tickets and pos.get("magic") == self.magic_number:
                 result["missing"].append(ticket)
 
         # Find extra (tracked but not in MT5)
