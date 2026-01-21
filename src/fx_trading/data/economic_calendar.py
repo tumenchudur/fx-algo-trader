@@ -39,13 +39,13 @@ class EconomicEvent:
 
 
 class EconomicCalendar:
-    """Fetches and caches economic calendar events.
-
-    """
+    """Fetches and caches economic calendar events."""
 
     FOREX_FACTORY_URL = "https://www.forexfactory.com/ffcal_week_this.xml"
     CACHE_DURATION = timedelta(hours=4)
 
+    def __init__(self):
+        """Initialize economic calendar."""
         self._events: list[EconomicEvent] = []
         self._last_fetch: Optional[datetime] = None
         self._http_client = httpx.Client(
@@ -53,11 +53,13 @@ class EconomicCalendar:
         )
 
     def fetch_events(self, force: bool = False) -> list[EconomicEvent]:
+        """Fetch economic events from calendar source.
 
         Args:
             force: Force refresh even if cache is valid
 
         Returns:
+            List of economic events
         """
         now = datetime.utcnow()
 
@@ -70,10 +72,13 @@ class EconomicCalendar:
             events = self._fetch_forex_factory()
             self._events = events
             self._last_fetch = now
-            return self._events
+        except Exception as e:
+            logger.warning(f"Failed to fetch economic calendar: {e}")
+            # Return cached events on failure
+        return self._events
 
     def _fetch_forex_factory(self) -> list[EconomicEvent]:
-        """Parse Forex Factory XML feed."""
+        """Fetch and parse Forex Factory XML feed."""
         response = self._http_client.get(self.FOREX_FACTORY_URL)
         response.raise_for_status()
 
@@ -82,6 +87,7 @@ class EconomicCalendar:
 
         for event_elem in root.findall(".//event"):
             try:
+                event = self._parse_event(event_elem)
                 if event:
                     events.append(event)
             except Exception as e:
@@ -90,6 +96,8 @@ class EconomicCalendar:
 
         return events
 
+    def _parse_event(self, elem) -> Optional[EconomicEvent]:
+        """Parse a single event element."""
         title = elem.findtext("title", "")
         currency = elem.findtext("country", "")
         date_str = elem.findtext("date", "")
@@ -110,6 +118,7 @@ class EconomicCalendar:
                 timestamp = datetime.strptime(datetime_str, "%m-%d-%Y %I:%M%p")
             else:
                 timestamp = datetime.strptime(datetime_str, "%m-%d-%Y %H:%M")
+        except ValueError:
             return None
 
         impact_map = {
