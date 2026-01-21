@@ -87,6 +87,36 @@ strategy:
     trading_start_hour: 7  # 7 AM UTC (London open)
     trading_end_hour: 20   # 8 PM UTC (before Asian session)
 
+    # RSI FILTER - Avoid overbought/oversold entries
+    use_rsi_filter: true
+    rsi_period: 14
+    rsi_overbought: 70     # Don't go LONG if RSI > 70
+    rsi_oversold: 30       # Don't go SHORT if RSI < 30
+
+    # TRAILING STOP - Lock in profits as price moves
+    trailing_stop:
+      enabled: true
+      method: atr_based    # "atr_based" or "fixed_pips"
+      atr_multiplier: 2.0  # Trail at 2*ATR behind peak price
+      activation_profit_atr: 1.0  # Activate after 1*ATR profit
+      step_pips: 5.0       # Min SL improvement in pips
+
+    # PARTIAL TAKE PROFIT - Scale out of winning trades
+    partial_tp:
+      enabled: true
+      first_target_r: 1.0  # First partial at 1R (risk-reward 1:1)
+      first_close_pct: 50  # Close 50% at first target
+      move_sl_to_breakeven: true  # Move SL to entry after partial
+
+  # Per-symbol parameter overrides
+  # Different instruments need different settings
+  symbol_params:
+    XAUUSD:
+      sl_atr_multiplier: 3.0   # Gold needs wider stops
+      lookback: 30             # Longer lookback for gold
+    USDJPY:
+      sl_atr_multiplier: 1.5   # JPY pairs have smaller moves
+
 # Cost model - Adjust for your broker
 costs:
   commission_per_lot: 6.0   # Your broker's commission (round trip)

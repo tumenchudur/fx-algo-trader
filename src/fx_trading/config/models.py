@@ -93,6 +93,12 @@ class StrategyConfig(BaseModel):
     # Strategy-specific parameters (flexible dict)
     params: dict[str, Any] = Field(default_factory=dict)
 
+    # Per-symbol parameter overrides
+    symbol_params: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Symbol-specific parameter overrides (e.g., XAUUSD: {sl_atr_multiplier: 3.0})"
+    )
+
     @field_validator("symbols", mode="before")
     @classmethod
     def ensure_list(cls, v: Any) -> list[str]:
@@ -100,6 +106,23 @@ class StrategyConfig(BaseModel):
         if isinstance(v, str):
             return [v]
         return v
+
+    def get_params_for_symbol(self, symbol: str) -> dict[str, Any]:
+        """
+        Get merged parameters for a specific symbol.
+
+        Merges base params with symbol-specific overrides.
+
+        Args:
+            symbol: Symbol to get params for
+
+        Returns:
+            Merged parameter dict
+        """
+        merged = dict(self.params)
+        if symbol in self.symbol_params:
+            merged.update(self.symbol_params[symbol])
+        return merged
 
 
 class DataConfig(BaseModel):
