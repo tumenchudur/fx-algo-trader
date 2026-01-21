@@ -9,7 +9,7 @@ from typing import Optional
 from loguru import logger
 
 from fx_trading.config.models import RiskConfig
-from fx_trading.types.models import Side
+from fx_trading.types.models import Side, get_contract_size
 
 
 class PositionSizer:
@@ -202,6 +202,7 @@ class PositionSizer:
         current_exposure: float,
         equity: float,
         entry_price: float,
+        symbol: str = "EURUSD",
     ) -> tuple[float, bool]:
         """
         Check if proposed size exceeds exposure limits.
@@ -211,12 +212,14 @@ class PositionSizer:
             current_exposure: Current total exposure
             equity: Account equity
             entry_price: Entry price
+            symbol: Trading symbol (for contract size)
 
         Returns:
             Tuple of (adjusted_size, was_limited)
         """
-        # Calculate proposed exposure
-        proposed_exposure = proposed_size * 100000 * entry_price
+        # Calculate proposed exposure using symbol-specific contract size
+        contract_size = get_contract_size(symbol)
+        proposed_exposure = proposed_size * contract_size * entry_price
         total_exposure = current_exposure + proposed_exposure
 
         # Check max total exposure
@@ -228,7 +231,7 @@ class PositionSizer:
             if available <= 0:
                 return 0.0, True
 
-            adjusted_size = available / (100000 * entry_price)
+            adjusted_size = available / (contract_size * entry_price)
             adjusted_size = self._constrain_size(adjusted_size)
 
             logger.warning(
@@ -244,6 +247,7 @@ class PositionSizer:
         current_exposure: float,
         equity: float,
         entry_price: float,
+        symbol: str = "EURUSD",
     ) -> tuple[float, bool]:
         """
         Check if proposed size exceeds leverage limit.
@@ -253,11 +257,13 @@ class PositionSizer:
             current_exposure: Current total exposure
             equity: Account equity
             entry_price: Entry price
+            symbol: Trading symbol (for contract size)
 
         Returns:
             Tuple of (adjusted_size, was_limited)
         """
-        proposed_exposure = proposed_size * 100000 * entry_price
+        contract_size = get_contract_size(symbol)
+        proposed_exposure = proposed_size * contract_size * entry_price
         total_exposure = current_exposure + proposed_exposure
 
         current_leverage = total_exposure / equity if equity > 0 else 0
@@ -270,7 +276,7 @@ class PositionSizer:
             if available <= 0:
                 return 0.0, True
 
-            adjusted_size = available / (100000 * entry_price)
+            adjusted_size = available / (contract_size * entry_price)
             adjusted_size = self._constrain_size(adjusted_size)
 
             logger.warning(

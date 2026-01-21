@@ -10,6 +10,44 @@ from uuid import UUID, uuid4
 import pandas as pd
 
 
+def get_contract_size(symbol: str) -> float:
+    """
+    Get contract size for a symbol.
+
+    Returns the number of units per standard lot:
+    - Forex pairs: 100,000 units (e.g., 100,000 EUR for EURUSD)
+    - Gold (XAUUSD): 100 troy ounces
+    - Silver (XAGUSD): 5,000 troy ounces
+    - Oil (XTIUSD/USOIL): 1,000 barrels
+
+    Args:
+        symbol: Trading symbol
+
+    Returns:
+        Contract size (units per lot)
+    """
+    symbol_upper = symbol.upper()
+
+    # Gold
+    if "XAU" in symbol_upper or "GOLD" in symbol_upper:
+        return 100.0
+
+    # Silver
+    if "XAG" in symbol_upper or "SILVER" in symbol_upper:
+        return 5000.0
+
+    # Oil
+    if "XTI" in symbol_upper or "USOIL" in symbol_upper or "WTI" in symbol_upper:
+        return 1000.0
+
+    # Brent Oil
+    if "XBR" in symbol_upper or "UKOIL" in symbol_upper or "BRENT" in symbol_upper:
+        return 1000.0
+
+    # Standard forex pairs
+    return 100000.0
+
+
 class Side(str, Enum):
     """Order/position side."""
 
@@ -212,13 +250,16 @@ class Position:
         Update and return unrealized PnL.
 
         Uses bid for long exits (sell), ask for short exits (buy to cover).
+        Contract size is determined by symbol type (forex=100k, gold=100, etc).
         """
+        contract_size = get_contract_size(self.symbol)
+
         if self.side == Side.LONG:
             exit_price = bid
-            self.unrealized_pnl = (exit_price - self.entry_price) * self.size * 100000
+            self.unrealized_pnl = (exit_price - self.entry_price) * self.size * contract_size
         elif self.side == Side.SHORT:
             exit_price = ask
-            self.unrealized_pnl = (self.entry_price - exit_price) * self.size * 100000
+            self.unrealized_pnl = (self.entry_price - exit_price) * self.size * contract_size
         else:
             self.unrealized_pnl = 0.0
 
@@ -291,11 +332,13 @@ class Trade:
         self.total_slippage = self.entry_slippage + self.exit_slippage
 
     def calculate_pnl(self) -> None:
-        """Calculate gross and net PnL."""
+        """Calculate gross and net PnL using symbol-specific contract size."""
+        contract_size = get_contract_size(self.symbol)
+
         if self.side == Side.LONG:
-            self.gross_pnl = (self.exit_price - self.entry_price) * self.size * 100000
+            self.gross_pnl = (self.exit_price - self.entry_price) * self.size * contract_size
         elif self.side == Side.SHORT:
-            self.gross_pnl = (self.entry_price - self.exit_price) * self.size * 100000
+            self.gross_pnl = (self.entry_price - self.exit_price) * self.size * contract_size
 
         self.net_pnl = self.gross_pnl - self.total_commission - self.total_slippage
 
