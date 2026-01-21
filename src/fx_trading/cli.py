@@ -480,11 +480,11 @@ def mt5_status(
     """
     Check MT5 connection status.
 
-    Tests the ZeroMQ connection to MT5 and displays account info.
+    Tests the connection to MT5 using the official MetaTrader5 package.
     """
     import yaml
     from fx_trading.config.models import LiveTradingConfig
-    from fx_trading.execution.mt5_zmq_client import MT5ZmqClient
+    from fx_trading.execution.mt5_client import MT5Client
 
     if not config.exists():
         console.print(f"[red]Error: Config file not found: {config}[/red]")
@@ -502,25 +502,27 @@ def mt5_status(
         console.print(f"[red]Config validation error: {e}[/red]")
         raise typer.Exit(1)
 
-    # Create client
+    # Create client using direct MT5 connection
     mt5_config = live_config.mt5
-    client = MT5ZmqClient(
-        host=mt5_config.zmq_host,
-        push_port=mt5_config.zmq_push_port,
-        pull_port=mt5_config.zmq_pull_port,
-        timeout_ms=mt5_config.timeout_seconds * 1000,
+    client = MT5Client(
+        path=mt5_config.path,
+        login=mt5_config.login,
+        password=mt5_config.password,
+        server=mt5_config.server,
+        timeout=mt5_config.timeout_ms,
+        portable=mt5_config.portable,
     )
 
     # Try to connect
-    console.print(f"Connecting to {mt5_config.zmq_host}:{mt5_config.zmq_push_port}...")
+    console.print("Connecting to MT5 terminal...")
 
     if not client.connect():
         console.print("[red]Failed to connect to MT5[/red]")
         console.print("\n[yellow]Troubleshooting:[/yellow]")
-        console.print("  1. Is MT5 terminal running on the target machine?")
-        console.print("  2. Is the DWX EA attached to a chart and enabled?")
-        console.print("  3. Are ports 32768/32769 accessible (firewall)?")
-        console.print(f"  4. Is the host '{mt5_config.zmq_host}' correct?")
+        console.print("  1. Is MT5 terminal running on this Windows machine?")
+        console.print("  2. Is MetaTrader5 package installed? (pip install MetaTrader5)")
+        console.print("  3. Are the login credentials correct?")
+        console.print("  4. Is the broker server name correct?")
         raise typer.Exit(1)
 
     console.print("[green]Connected to MT5![/green]\n")
@@ -533,7 +535,9 @@ def mt5_status(
         table.add_column("Value", style="green")
 
         table.add_row("Login", str(account.get("login", "N/A")))
+        table.add_row("Name", str(account.get("name", "N/A")))
         table.add_row("Server", str(account.get("server", "N/A")))
+        table.add_row("Currency", str(account.get("currency", "N/A")))
         table.add_row("Balance", f"${account.get('balance', 0):,.2f}")
         table.add_row("Equity", f"${account.get('equity', 0):,.2f}")
         table.add_row("Margin", f"${account.get('margin', 0):,.2f}")
@@ -542,14 +546,15 @@ def mt5_status(
 
         console.print(table)
 
-    # Get open trades
-    trades = client.get_open_trades()
-    if trades:
-        console.print(f"\n[bold]Open Positions: {len(trades)}[/bold]")
-        for ticket, trade in trades.items():
+    # Get open positions
+    positions = client.get_open_positions()
+    if positions:
+        console.print(f"\n[bold]Open Positions: {len(positions)}[/bold]")
+        for pos in positions:
             console.print(
-                f"  {ticket}: {trade.get('symbol')} {trade.get('type')} "
-                f"{trade.get('lots')} lots @ {trade.get('open_price')}"
+                f"  {pos.get('ticket')}: {pos.get('symbol')} {pos.get('type')} "
+                f"{pos.get('volume')} lots @ {pos.get('price_open')} "
+                f"P/L: ${pos.get('profit', 0):.2f}"
             )
     else:
         console.print("\n[dim]No open positions[/dim]")
@@ -587,8 +592,8 @@ def live_trade(
     """
     import yaml
     from fx_trading.config.models import LiveTradingConfig
-    from fx_trading.execution.mt5_zmq_client import MT5ZmqClient
-    from fx_trading.execution.mt5_broker import MT5ZmqBroker
+    from fx_trading.execution.mt5_client import MT5Client
+    from fx_trading.execution.mt5_broker import MT5Broker
     from fx_trading.portfolio.accounting import PortfolioManager
     from fx_trading.risk.engine import RiskEngine
     from fx_trading.strategies.base import StrategyFactory
@@ -635,16 +640,18 @@ def live_trade(
     log_level = "DEBUG" if verbose else live_config.log_level
     setup_logging(level=log_level)
 
-    # Create MT5 client and broker
+    # Create MT5 client and broker using direct connection
     mt5_config = live_config.mt5
-    client = MT5ZmqClient(
-        host=mt5_config.zmq_host,
-        push_port=mt5_config.zmq_push_port,
-        pull_port=mt5_config.zmq_pull_port,
-        timeout_ms=mt5_config.timeout_seconds * 1000,
+    client = MT5Client(
+        path=mt5_config.path,
+        login=mt5_config.login,
+        password=mt5_config.password,
+        server=mt5_config.server,
+        timeout=mt5_config.timeout_ms,
+        portable=mt5_config.portable,
     )
 
-    broker = MT5ZmqBroker(
+    broker = MT5Broker(
         client=client,
         symbol_suffix=mt5_config.symbol_suffix,
         magic_number=mt5_config.magic_number,

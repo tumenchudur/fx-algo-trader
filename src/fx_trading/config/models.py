@@ -254,18 +254,20 @@ class MT5Config(BaseModel):
     """
     MetaTrader 5 connection configuration.
 
-    Uses ZeroMQ bridge to connect to MT5 running on Windows.
-    See: https://github.com/darwinex/dwxconnect
+    Uses the official MetaTrader5 Python package for direct connection.
+    MT5 terminal must be running on the same Windows machine.
     """
 
-    # ZeroMQ connection settings
-    zmq_host: str = Field(default="localhost", description="MT5 machine hostname/IP")
-    zmq_push_port: int = Field(default=32768, description="ZMQ PUSH port (commands to MT5)")
-    zmq_pull_port: int = Field(default=32769, description="ZMQ PULL port (data from MT5)")
-    timeout_seconds: int = Field(default=30, ge=1, description="Socket timeout")
+    # MT5 connection settings (direct connection via MetaTrader5 package)
+    path: Optional[str] = Field(default=None, description="Path to MT5 terminal (optional, auto-detect)")
+    login: Optional[int] = Field(default=None, description="MT5 account login number")
+    password: Optional[str] = Field(default=None, description="MT5 account password")
+    server: Optional[str] = Field(default=None, description="MT5 broker server name")
+    timeout_ms: int = Field(default=60000, ge=1000, description="Connection timeout in milliseconds")
+    portable: bool = Field(default=False, description="Use portable mode")
 
     # Trading settings
-    symbol_suffix: str = Field(default="", description="Suffix for symbols (e.g., 'm' for micro accounts)")
+    symbol_suffix: str = Field(default="", description="Suffix for symbols (e.g., '.ecn' for ECN accounts)")
     magic_number: int = Field(default=123456, description="Magic number for identifying our trades")
 
     # Reconnection settings
