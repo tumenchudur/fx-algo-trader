@@ -21,6 +21,7 @@ from fx_trading.types.models import (
     Side,
     PortfolioSnapshot,
     DailySummary,
+    get_contract_size,
 )
 
 
@@ -205,7 +206,8 @@ class PortfolioManager:
         self.positions[position.id] = position
 
         # Calculate margin (simplified: 1% margin requirement)
-        margin = size * 100000 * entry_price * 0.01
+        contract_size = get_contract_size(symbol)
+        margin = size * contract_size * entry_price * 0.01
         self.account.margin_used += margin
 
         logger.info(
@@ -281,7 +283,8 @@ class PortfolioManager:
         self.daily_pnl += trade.net_pnl
 
         # Release margin
-        margin = position.size * 100000 * position.entry_price * 0.01
+        contract_size = get_contract_size(position.symbol)
+        margin = position.size * contract_size * position.entry_price * 0.01
         self.account.margin_used -= margin
 
         # Log trade
@@ -410,7 +413,7 @@ class PortfolioManager:
     def get_total_exposure(self) -> float:
         """Get total position exposure in account currency."""
         return sum(
-            p.size * 100000 * p.current_price
+            p.size * get_contract_size(p.symbol) * p.current_price
             for p in self.positions.values()
         )
 
@@ -423,7 +426,8 @@ class PortfolioManager:
             base = position.symbol[:3]
             quote = position.symbol[3:]
 
-            value = position.size * 100000 * position.current_price
+            contract_size = get_contract_size(position.symbol)
+            value = position.size * contract_size * position.current_price
 
             if position.side == Side.LONG:
                 exposure[base] = exposure.get(base, 0) + value
