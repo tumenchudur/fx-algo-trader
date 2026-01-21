@@ -273,6 +273,31 @@ class MT5Config(BaseModel):
     retry_delay_seconds: float = Field(default=5.0, gt=0, description="Delay between retries")
 
 
+class NewsFilterLiveConfig(BaseModel):
+    """News filter configuration for live trading."""
+
+    enabled: bool = Field(default=True, description="Enable news filter")
+    minutes_before: int = Field(default=30, ge=0, description="Minutes before event to block")
+    minutes_after: int = Field(default=15, ge=0, description="Minutes after event to block")
+    min_impact: str = Field(default="high", description="Minimum impact level (low/medium/high)")
+    currencies: Optional[list[str]] = Field(default=None, description="Currencies to monitor")
+    block_modifications: bool = Field(default=False, description="Block SL/TP modifications too")
+    finnhub_api_key: Optional[str] = Field(default=None, description="Finnhub API key")
+
+
+class TelegramConfig(BaseModel):
+    """Telegram notification configuration."""
+
+    enabled: bool = Field(default=False, description="Enable Telegram notifications")
+    bot_token: Optional[str] = Field(default=None, description="Telegram bot token")
+    chat_id: Optional[str] = Field(default=None, description="Telegram chat ID")
+    notify_on_trade: bool = Field(default=True, description="Notify on new trades")
+    notify_on_close: bool = Field(default=True, description="Notify on trade close")
+    notify_on_error: bool = Field(default=True, description="Notify on errors")
+    notify_on_kill_switch: bool = Field(default=True, description="Notify on kill switch")
+    notify_daily_summary: bool = Field(default=False, description="Send daily summary")
+
+
 class LiveTradingConfig(BaseModel):
     """
     Live/demo trading configuration.
@@ -309,6 +334,12 @@ class LiveTradingConfig(BaseModel):
 
     # Logging
     log_level: str = Field(default="INFO")
+
+    # News filter
+    news_filter: NewsFilterLiveConfig = Field(default_factory=NewsFilterLiveConfig)
+
+    # Telegram notifications
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
 
     @field_validator("symbols", mode="before")
     @classmethod

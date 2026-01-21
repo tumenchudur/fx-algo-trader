@@ -20,6 +20,12 @@ from fx_trading.portfolio.accounting import PortfolioManager
 from fx_trading.risk.engine import RiskEngine
 from fx_trading.risk.news_filter import NewsFilter, NewsFilterConfig, TradingSchedule, Impact
 from fx_trading.strategies.base import Strategy
+from fx_trading.trading.position_manager import (
+    TrailingStopManager,
+    PartialTakeProfitManager,
+    parse_trailing_stop_config,
+    parse_partial_tp_config,
+)
 from fx_trading.types.models import Order, OrderType, Side, PriceData
 
 
@@ -85,6 +91,16 @@ class LiveTradingRunner:
         # Initialize Telegram notifier
         self.telegram = self._init_telegram()
 
+        # Initialize position managers
+        self.trailing_stop_manager = self._init_trailing_stop()
+        self.partial_tp_manager = self._init_partial_tp()
+
+        # Track bar indices per symbol (for time-based exit)
+        self.bar_index: dict[str, int] = {s: 0 for s in config.symbols}
+
+        # Track last ATR for trailing stop calculations
+        self.last_atr: dict[str, float] = {}
+
         # Setup signal handlers for graceful shutdown
         self._setup_signal_handlers()
 
@@ -146,6 +162,34 @@ class LiveTradingRunner:
         )
         logger.info("Telegram notifications enabled")
         return notifier
+
+    def _init_trailing_stop(self) -> Optional[TrailingStopManager]:
+        """Initialize trailing stop manager from strategy config."""
+        ts_config = parse_trailing_stop_config(self.strategy.params)
+        if not ts_config.enabled:
+            logger.info("Trailing stop disabled")
+            return None
+
+        manager = TrailingStopManager(ts_config)
+        logger.info(
+            f"Trailing stop enabled: method={ts_config.method}, "
+            f"atr_mult={ts_config.atr_multiplier}, activation={ts_config.activation_profit_atr}*ATR"
+        )
+        return manager
+
+    def _init_partial_tp(self) -> Optional[PartialTakeProfitManager]:
+        """Initialize partial take profit manager from strategy config."""
+        ptp_config = parse_partial_tp_config(self.strategy.params)
+        if not ptp_config.enabled:
+            logger.info("Partial take profit disabled")
+            return None
+
+        manager = PartialTakeProfitManager(ptp_config)
+        logger.info(
+            f"Partial TP enabled: first={ptp_config.first_target_r}R @ {ptp_config.first_close_pct}%, "
+            f"breakeven={ptp_config.move_sl_to_breakeven}"
+        )
+        return manager
 
     def _setup_signal_handlers(self) -> None:
         """Setup handlers for graceful shutdown."""
@@ -291,6 +335,25 @@ class LiveTradingRunner:
                     f"Order filled: {symbol} {signal.side.value} "
                     f"size={order.size} @ {fill.fill_price}"
                 )
+
+                # Register new position with managers
+                positions = self.broker.get_positions(symbol)
+                if positions:
+                    new_position = positions[-1]  # Get the most recent position
+
+                    # Set time exit bars from signal
+                    if signal.time_exit_bars:
+                        new_position.time_exit_bars = signal.time_exit_bars
+                        new_position.entry_bar_index = self.bar_index.get(symbol, 0)
+
+                    # Register with trailing stop manager
+                    if self.trailing_stop_manager:
+                        self.trailing_stop_manager.register_position(new_position)
+
+                    # Register with partial TP manager
+                    if self.partial_tp_manager:
+                        self.partial_tp_manager.register_position(new_position)
+
                 # Send Telegram notification
                 if self.telegram and self.config.telegram.notify_on_trade:
                     self.telegram.trade_opened(
@@ -303,46 +366,96 @@ class LiveTradingRunner:
                     )
 
     def _check_position_exits(self, position, price_data: PriceData) -> None:
-        """Check if position should be closed."""
+        """Check if position should be closed or modified."""
         # Update PnL
         position.update_pnl(price_data.bid, price_data.ask)
 
-        # Check stop loss
+        # Current price for exit checks
+        current_price = price_data.bid if position.side == Side.LONG else price_data.ask
+
+        # 1. Check stop loss
         if position.check_stop_loss(price_data.bid, price_data.ask):
             logger.info(f"Stop loss triggered for {position.symbol}")
-            exit_price = price_data.bid if position.side.value == "BUY" else price_data.ask
-            self.broker.close_position(position.id)
-            # Send Telegram notification
-            if self.telegram and self.config.telegram.notify_on_close:
-                self.telegram.trade_closed(
-                    symbol=position.symbol,
-                    side=position.side.value,
-                    size=position.size,
-                    entry_price=position.entry_price,
-                    exit_price=exit_price,
-                    profit=position.unrealized_pnl,
-                )
+            self._close_position_with_notification(position, current_price, "STOP_LOSS")
+            self._cleanup_position_managers(position.id)
             return
 
-        # Check take profit
+        # 2. Check take profit
         if position.check_take_profit(price_data.bid, price_data.ask):
             logger.info(f"Take profit triggered for {position.symbol}")
-            exit_price = price_data.bid if position.side.value == "BUY" else price_data.ask
-            self.broker.close_position(position.id)
-            # Send Telegram notification
-            if self.telegram and self.config.telegram.notify_on_close:
-                self.telegram.trade_closed(
-                    symbol=position.symbol,
-                    side=position.side.value,
-                    size=position.size,
-                    entry_price=position.entry_price,
-                    exit_price=exit_price,
-                    profit=position.unrealized_pnl,
-                )
+            self._close_position_with_notification(position, current_price, "TAKE_PROFIT")
+            self._cleanup_position_managers(position.id)
             return
 
+        # 3. Check time-based exit
+        if position.time_exit_bars is not None:
+            current_bar_idx = self.bar_index.get(position.symbol, 0)
+            if position.check_time_exit(current_bar_idx):
+                logger.info(f"Time exit triggered for {position.symbol} after {position.time_exit_bars} bars")
+                self._close_position_with_notification(position, current_price, "TIME_EXIT")
+                self._cleanup_position_managers(position.id)
+                return
+
+        # 4. Check trailing stop
+        if self.trailing_stop_manager:
+            atr = self.last_atr.get(position.symbol)
+            new_sl = self.trailing_stop_manager.calculate_new_stop(position, current_price, atr)
+            if new_sl:
+                try:
+                    self.broker.modify_position_sl_tp(position.id, sl=new_sl)
+                    position.stop_loss = new_sl  # Update local copy
+                except Exception as e:
+                    logger.error(f"Failed to modify trailing stop: {e}")
+
+        # 5. Check partial take profit
+        if self.partial_tp_manager:
+            action = self.partial_tp_manager.check_partial_exit(position, current_price)
+            if action:
+                try:
+                    # Close partial position
+                    self.broker.close_position(position.id, size=action.close_size)
+                    logger.info(f"Partial TP executed: closed {action.close_size:.2f} lots")
+
+                    # Move SL to breakeven if configured
+                    if action.new_sl:
+                        self.broker.modify_position_sl_tp(position.id, sl=action.new_sl)
+                        position.stop_loss = action.new_sl
+
+                    # Send notification
+                    if self.telegram and self.config.telegram.notify_on_close:
+                        self.telegram.trade_closed(
+                            symbol=position.symbol,
+                            side=position.side.value,
+                            size=action.close_size,
+                            entry_price=position.entry_price,
+                            exit_price=current_price,
+                            profit=position.unrealized_pnl * (action.close_size / position.size),
+                        )
+                except Exception as e:
+                    logger.error(f"Failed to execute partial TP: {e}")
+
+    def _close_position_with_notification(self, position, exit_price: float, reason: str) -> None:
+        """Close position and send notification."""
+        self.broker.close_position(position.id)
+        if self.telegram and self.config.telegram.notify_on_close:
+            self.telegram.trade_closed(
+                symbol=position.symbol,
+                side=position.side.value,
+                size=position.size,
+                entry_price=position.entry_price,
+                exit_price=exit_price,
+                profit=position.unrealized_pnl,
+            )
+
+    def _cleanup_position_managers(self, position_id) -> None:
+        """Remove position from tracking managers."""
+        if self.trailing_stop_manager:
+            self.trailing_stop_manager.unregister_position(position_id)
+        if self.partial_tp_manager:
+            self.partial_tp_manager.unregister_position(position_id)
+
     def _store_price(self, symbol: str, price_data: PriceData) -> None:
-        """Store price in rolling history."""
+        """Store price in rolling history and update tracking."""
         bar = {
             "datetime": price_data.timestamp,
             "open": price_data.mid,
@@ -356,9 +469,39 @@ class LiveTradingRunner:
         }
         self.price_history[symbol].append(bar)
 
+        # Increment bar index for time-based exit tracking
+        self.bar_index[symbol] = self.bar_index.get(symbol, 0) + 1
+
         # Trim to max history
         if len(self.price_history[symbol]) > self.max_history_bars:
             self.price_history[symbol] = self.price_history[symbol][-self.max_history_bars:]
+
+        # Update ATR for trailing stop calculations
+        self._update_atr(symbol)
+
+    def _update_atr(self, symbol: str) -> None:
+        """Update ATR calculation for trailing stop."""
+        if not self.trailing_stop_manager:
+            return
+
+        df = self._get_price_dataframe(symbol)
+        if df is None or len(df) < 20:  # Need enough bars for ATR
+            return
+
+        # Simple ATR calculation
+        high = df["high"]
+        low = df["low"]
+        close = df["close"].shift(1)
+
+        tr1 = high - low
+        tr2 = (high - close).abs()
+        tr3 = (low - close).abs()
+
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(14).mean().iloc[-1]
+
+        if not pd.isna(atr):
+            self.last_atr[symbol] = atr
 
     def _get_price_dataframe(self, symbol: str) -> Optional[pd.DataFrame]:
         """Convert price history to DataFrame for strategy."""

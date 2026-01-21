@@ -63,6 +63,7 @@ class NewsFilter:
 
     def __init__(self, config: Optional[NewsFilterConfig] = None):
         self.config = config or NewsFilterConfig()
+        self._calendar = EconomicCalendar()
         self._blocked_until: dict[str, datetime] = {}
 
     def check_trading_allowed(
