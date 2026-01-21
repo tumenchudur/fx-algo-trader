@@ -76,12 +76,19 @@ class VolatilityBreakoutStrategy(Strategy):
         self.trading_start_hour = self.params.get("trading_start_hour", 7)  # 7 AM UTC
         self.trading_end_hour = self.params.get("trading_end_hour", 20)  # 8 PM UTC
 
+        # RSI filter parameters
+        self.use_rsi_filter = self.params.get("use_rsi_filter", True)
+        self.rsi_period = self.params.get("rsi_period", 14)
+        self.rsi_overbought = self.params.get("rsi_overbought", 70)
+        self.rsi_oversold = self.params.get("rsi_oversold", 30)
+
         logger.info(
             f"VolatilityBreakout params: lookback={self.lookback}, "
             f"atr_period={self.atr_period}, atr_threshold={self.atr_threshold}, "
             f"trend_ema={self.trend_ema_period}, use_trend_filter={self.use_trend_filter}, "
             f"adx_threshold={self.adx_threshold}, use_adx_filter={self.use_adx_filter}, "
-            f"time_filter={self.use_time_filter} ({self.trading_start_hour}-{self.trading_end_hour} UTC)"
+            f"time_filter={self.use_time_filter} ({self.trading_start_hour}-{self.trading_end_hour} UTC), "
+            f"rsi_filter={self.use_rsi_filter} (period={self.rsi_period}, OB={self.rsi_overbought}, OS={self.rsi_oversold})"
         )
 
     def generate_signals(
@@ -183,12 +190,30 @@ class VolatilityBreakoutStrategy(Strategy):
                 else:
                     signal_side = Side.SHORT
 
+        # RSI FILTER: Block overbought longs and oversold shorts
+        rsi = None
+        if signal_side is not None and self.use_rsi_filter:
+            rsi = self._calculate_rsi(historical)
+            if not pd.isna(rsi):
+                if signal_side == Side.LONG and rsi > self.rsi_overbought:
+                    logger.debug(f"RSI filter blocked LONG: RSI={rsi:.1f} > {self.rsi_overbought}")
+                    return signals  # Block overbought longs
+                if signal_side == Side.SHORT and rsi < self.rsi_oversold:
+                    logger.debug(f"RSI filter blocked SHORT: RSI={rsi:.1f} < {self.rsi_oversold}")
+                    return signals  # Block oversold shorts
+
         if signal_side is not None:
             # Calculate entry price (use close for signal, actual entry uses bid/ask)
             entry_price = current_close
 
-            # Calculate stop loss
-            sl_distance = atr * self.sl_atr_multiplier
+            # Get symbol from data if available
+            symbol = current_bar.get("symbol", self.symbols[0]) if hasattr(current_bar, "get") else self.symbols[0]
+            if isinstance(symbol, pd.Series):
+                symbol = symbol.iloc[0] if len(symbol) > 0 else self.symbols[0]
+
+            # Calculate stop loss - use per-symbol sl_atr_multiplier if available
+            sl_atr_mult = self.get_param("sl_atr_multiplier", symbol=symbol, default=self.sl_atr_multiplier)
+            sl_distance = atr * sl_atr_mult
             if signal_side == Side.LONG:
                 stop_loss = entry_price - sl_distance
             else:
@@ -196,11 +221,6 @@ class VolatilityBreakoutStrategy(Strategy):
 
             # Calculate take profit
             take_profit = self.calculate_take_profit(entry_price, stop_loss, signal_side)
-
-            # Get symbol from data if available
-            symbol = current_bar.get("symbol", self.symbols[0]) if hasattr(current_bar, "get") else self.symbols[0]
-            if isinstance(symbol, pd.Series):
-                symbol = symbol.iloc[0] if len(symbol) > 0 else self.symbols[0]
 
             # Calculate signal strength based on multiple factors
             strength = self._calculate_signal_strength(atr, avg_atr, adx if self.use_adx_filter else 25)
@@ -221,14 +241,17 @@ class VolatilityBreakoutStrategy(Strategy):
                     "trend_direction": trend_direction,
                     "adx": adx if self.use_adx_filter else None,
                     "ema": current_ema if self.use_trend_filter else None,
+                    "rsi": rsi if self.use_rsi_filter else None,
                 },
             )
             signals.append(signal)
 
+            rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
             logger.debug(
                 f"Breakout signal: {signal_side.value} @ {entry_price:.5f}, "
                 f"SL={stop_loss:.5f}, TP={take_profit}, "
-                f"trend={trend_direction}, ADX={adx if self.use_adx_filter else 'N/A'}"
+                f"trend={trend_direction}, ADX={adx if self.use_adx_filter else 'N/A'}, "
+                f"RSI={rsi_str}"
             )
 
         return signals
@@ -326,6 +349,35 @@ class VolatilityBreakoutStrategy(Strategy):
 
         return max(0.1, min(1.0, vol_score + adx_score))
 
+    def _calculate_rsi(self, data: pd.DataFrame) -> float:
+        """
+        Calculate RSI (Relative Strength Index).
+
+        RSI measures momentum and identifies overbought/oversold conditions.
+        - RSI > 70: Overbought (avoid longs)
+        - RSI < 30: Oversold (avoid shorts)
+
+        Args:
+            data: Historical OHLC data
+
+        Returns:
+            Current RSI value (0-100)
+        """
+        close = data["close"]
+        delta = close.diff()
+
+        gain = delta.where(delta > 0, 0.0)
+        loss = (-delta.where(delta < 0, 0.0))
+
+        avg_gain = gain.rolling(window=self.rsi_period).mean()
+        avg_loss = loss.rolling(window=self.rsi_period).mean()
+
+        # Avoid division by zero
+        rs = avg_gain / avg_loss.replace(0, np.inf)
+        rsi = 100 - (100 / (1 + rs))
+
+        return rsi.iloc[-1]
+
     def get_lookback_period(self) -> int:
         """Get minimum lookback needed."""
-        return max(self.lookback, self.atr_period * 2, self.trend_ema_period, self.adx_period * 2) + 1
+        return max(self.lookback, self.atr_period * 2, self.trend_ema_period, self.adx_period * 2, self.rsi_period) + 1

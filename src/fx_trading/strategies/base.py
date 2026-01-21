@@ -39,6 +39,26 @@ class Strategy(ABC):
 
         logger.info(f"Strategy initialized: {self.name} ({config.strategy_type})")
 
+    def get_param(self, key: str, symbol: Optional[str] = None, default=None):
+        """
+        Get a parameter value, optionally with symbol-specific override.
+
+        Args:
+            key: Parameter name
+            symbol: Optional symbol for symbol-specific params
+            default: Default value if key not found
+
+        Returns:
+            Parameter value
+        """
+        if symbol:
+            # Use symbol-specific merged params
+            merged = self.config.get_params_for_symbol(symbol)
+            return merged.get(key, default)
+        else:
+            # Use base params
+            return self.params.get(key, default)
+
     @abstractmethod
     def generate_signals(
         self,
