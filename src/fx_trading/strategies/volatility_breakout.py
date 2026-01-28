@@ -118,8 +118,14 @@ class VolatilityBreakoutStrategy(Strategy):
         current_bar = data.iloc[current_index]
         historical = data.iloc[:current_index + 1]
 
-        # TIME FILTER: Check if we're in trading hours
-        if self.use_time_filter:
+        # Extract symbol for per-symbol parameter lookups
+        symbol = current_bar.get("symbol", self.symbols[0]) if hasattr(current_bar, "get") else self.symbols[0]
+        if hasattr(symbol, "iloc"):
+            symbol = symbol.iloc[0] if len(symbol) > 0 else self.symbols[0]
+
+        # TIME FILTER: Check if we're in trading hours (supports per-symbol override)
+        use_time_filter = self.get_param("use_time_filter", symbol, self.use_time_filter)
+        if use_time_filter:
             current_time = data.index[current_index]
             if isinstance(current_time, datetime):
                 hour = current_time.hour
@@ -153,8 +159,10 @@ class VolatilityBreakoutStrategy(Strategy):
             else:
                 return signals  # No clear trend
 
-        # ADX FILTER: Check if market is trending
-        if self.use_adx_filter:
+        # ADX FILTER: Check if market is trending (supports per-symbol override)
+        use_adx_filter = self.get_param("use_adx_filter", symbol, self.use_adx_filter)
+        adx = None  # Initialize for case when filter is disabled
+        if use_adx_filter:
             adx = self._calculate_adx(historical)
             if pd.isna(adx) or adx < self.adx_threshold:
                 return signals  # Market not trending enough
@@ -206,11 +214,6 @@ class VolatilityBreakoutStrategy(Strategy):
             # Calculate entry price (use close for signal, actual entry uses bid/ask)
             entry_price = current_close
 
-            # Get symbol from data if available
-            symbol = current_bar.get("symbol", self.symbols[0]) if hasattr(current_bar, "get") else self.symbols[0]
-            if isinstance(symbol, pd.Series):
-                symbol = symbol.iloc[0] if len(symbol) > 0 else self.symbols[0]
-
             # Calculate stop loss - use per-symbol sl_atr_multiplier if available
             sl_atr_mult = self.get_param("sl_atr_multiplier", symbol=symbol, default=self.sl_atr_multiplier)
             sl_distance = atr * sl_atr_mult
@@ -223,7 +226,7 @@ class VolatilityBreakoutStrategy(Strategy):
             take_profit = self.calculate_take_profit(entry_price, stop_loss, signal_side)
 
             # Calculate signal strength based on multiple factors
-            strength = self._calculate_signal_strength(atr, avg_atr, adx if self.use_adx_filter else 25)
+            strength = self._calculate_signal_strength(atr, avg_atr, adx if use_adx_filter else 25)
 
             signal = Signal(
                 timestamp=data.index[current_index] if isinstance(data.index[current_index], datetime) else datetime.utcnow(),
@@ -239,7 +242,7 @@ class VolatilityBreakoutStrategy(Strategy):
                     "atr": atr,
                     "avg_atr": avg_atr,
                     "trend_direction": trend_direction,
-                    "adx": adx if self.use_adx_filter else None,
+                    "adx": adx if use_adx_filter else None,
                     "ema": current_ema if self.use_trend_filter else None,
                     "rsi": rsi if self.use_rsi_filter else None,
                 },

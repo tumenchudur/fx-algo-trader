@@ -1,0 +1,117 @@
+# Backtest Configuration - Testing New Features (Wider SL/TP)
+# ============================================================
+# Tests: RSI filter, per-pair params, trailing stop, partial TP
+# Updated with wider SL and larger TP targets
+
+run_id: bt_xauusd_more_signals
+
+# Data settings
+data_path: data/sample/XAUUSD_M5.parquet
+symbols:
+  - XAUUSD
+
+# Account settings
+initial_capital: 200.0  # Match demo account
+base_currency: USD
+
+# Output
+output_dir: runs
+
+# Strategy configuration
+strategy:
+  name: volatility_breakout_enhanced
+  strategy_type: volatility_breakout
+  enabled: true
+  symbols:
+    - XAUUSD
+  timeframe: M5
+
+  # Entry/exit settings
+  use_stop_loss: true
+  use_take_profit: true
+  risk_reward_ratio: 5.0  # 5:1 (was 3:1) - larger TP target
+  time_exit_bars: 144  # Exit after 12 hours (was 4 hours)
+
+  # Strategy-specific parameters
+  params:
+    # Core breakout settings
+    lookback: 20
+    atr_period: 14
+    atr_threshold: 1.0
+    sl_atr_multiplier: 3.0  # Wider SL (was 2.0)
+    require_close_above: true
+
+    # Trend filter
+    use_trend_filter: true
+    trend_ema_period: 50
+
+    # ADX filter
+    use_adx_filter: false   # Disabled for more gold signals
+    adx_period: 14
+    adx_threshold: 20
+
+    # Time filter
+    use_time_filter: false  # Disabled for more gold signals
+    trading_start_hour: 7
+    trading_end_hour: 20
+
+    # RSI Filter
+    use_rsi_filter: true
+    rsi_period: 14
+    rsi_overbought: 70
+    rsi_oversold: 30
+
+    # Trailing Stop (note: only affects live trading, not backtest)
+    trailing_stop:
+      enabled: true
+      method: atr_based
+      atr_multiplier: 2.5  # Was 2.0
+      activation_profit_atr: 2.0  # Was 1.0 - more room before activation
+      step_pips: 10.0  # Was 5.0
+
+    # Partial Take Profit (note: only affects live trading, not backtest)
+    partial_tp:
+      enabled: true
+      first_target_r: 2.0  # Was 1.0 - let winners run more
+      first_close_pct: 30  # Was 50 - keep more position
+      move_sl_to_breakeven: true
+
+  # Per-symbol parameter overrides
+  symbol_params:
+    XAUUSD:
+      sl_atr_multiplier: 5.0  # Gold needs much wider stops
+      lookback: 15            # Shorter lookback = more signals
+    USDJPY:
+      sl_atr_multiplier: 2.5  # Was 1.5
+    GBPUSD:
+      sl_atr_multiplier: 3.5  # GBP is volatile
+
+# Cost model
+costs:
+  commission_per_lot: 7.0
+  commission_type: per_lot
+  slippage_model: fixed_pips
+  slippage_pips: 0.5
+  use_provided_spread: true
+  default_spread_pips: 1.5
+  spread_multiplier: 1.0
+
+# Risk management
+risk:
+  max_risk_per_trade_pct: 5.0   # Match mt5_demo.yaml
+  max_position_size_lots: 0.1   # Match mt5_demo.yaml
+  min_position_size_lots: 0.01
+  max_open_positions: 3
+  max_exposure_per_currency_pct: 30.0
+  max_total_exposure_pct: 100.0
+  max_leverage: 1000.0  # Match broker's 1:1000 leverage
+  daily_loss_limit_pct: 50.0   # Higher for backtest analysis
+  max_drawdown_pct: 50.0       # Higher for backtest analysis
+  close_positions_on_kill: true
+  max_spread_pips: 50.0  # Gold has wider spreads than forex
+  stale_price_seconds: 60.0
+  no_martingale: true
+  no_revenge_trading: true
+  revenge_cooldown_bars: 5
+
+random_seed: 42
