@@ -1,114 +1,197 @@
-# MT5 Demo Trading Configuration
-# ================================
-# This configuration connects to MetaTrader 5 via ZeroMQ for live/demo trading.
+# MT5 Demo Trading Configuration - EXAMPLE TEMPLATE
+# ==================================================
+# Copy this file to mt5_demo.yaml and fill in your credentials
 #
 # PREREQUISITES:
-# 1. MT5 terminal running on Windows (VM/VPS or local machine)
-# 2. DWX ZeroMQ EA installed and attached to a chart
-#    Download: https://github.com/darwinex/dwxconnect
-# 3. Network connectivity between this machine and MT5
+# 1. MT5 terminal running on Windows (same machine as this script)
+# 2. pip install MetaTrader5
+# 3. Logged into your MT5 account (demo recommended!)
 #
 # IMPORTANT: Use DEMO account only until fully tested!
 
 # Run identification
 run_id: mt5_demo_volatility_breakout
 
-# MT5 ZeroMQ Connection
+# MT5 Connection Settings
 mt5:
-  # Host where MT5 is running
-  # - "localhost" if MT5 on same machine (rare on macOS)
-  # - IP address of Windows machine running MT5
-  zmq_host: "localhost"  # Change to your Windows machine IP
+  # Path to MT5 terminal (optional - auto-detects if not set)
+  # path: "C:/Program Files/MetaTrader 5/terminal64.exe"
 
-  # ZeroMQ ports (must match EA settings)
-  zmq_push_port: 32768  # Commands to MT5
-  zmq_pull_port: 32769  # Data from MT5
+  # Account credentials - FILL IN YOUR OWN
+  login: 1100255959          # e.g., 1234567
+  password: ""  # Your MT5 password
+  server: "JustMarkets-Demo2"   # e.g., "JustMarkets-Demo2"
 
-  # Connection settings
-  timeout_seconds: 30
+  # Connection timeout in milliseconds
+  timeout_ms: 60000
 
-  # Symbol suffix for your broker (empty for most, "m" for micro accounts)
-  symbol_suffix: ""
+  # Use portable mode
+  portable: false
+
+  # Symbol suffix for your broker (empty for most, ".ecn" for ECN, ".s" for standard)
+  symbol_suffix: ".ecn"
 
   # Magic number for identifying our trades (avoid conflicts with other EAs)
   magic_number: 123456
 
-  # Reconnection settings
-  retry_attempts: 3
-  retry_delay_seconds: 5.0
 
 # Trading settings
 symbols:
   - EURUSD
+  - USDJPY
+  - GBPUSD
+  - XAUUSD
 poll_interval_seconds: 5.0  # How often to check prices and signals
 
 # Output directory
 output_dir: runs/live
 
-# Strategy configuration (same as backtest)
+# Strategy configuration
 strategy:
   name: volatility_breakout_live
   strategy_type: volatility_breakout
   enabled: true
   symbols:
     - EURUSD
+    - USDJPY
+    - GBPUSD
+    - XAUUSD
   timeframe: M5
 
   # Entry/exit settings
   use_stop_loss: true
   use_take_profit: true
-  risk_reward_ratio: 2.0
-  time_exit_bars: 48  # Exit after 4 hours if not stopped out
+  risk_reward_ratio: 5.0  # 5:1 risk reward ratio (was 3:1) - larger TP target
+  time_exit_bars: 144  # Exit after 12 hours if not stopped out (was 6 hours)
 
   # Strategy-specific parameters
   params:
+    # Core breakout settings
     lookback: 20           # Bars for high/low breakout
     atr_period: 14         # ATR period for volatility
-    atr_threshold: 1.0     # Trade when ATR > X * avg ATR
-    sl_atr_multiplier: 2.0 # Stop loss = entry +/- 2*ATR
+    atr_threshold: 1.5     # Trade when ATR > 50% above average
+    sl_atr_multiplier: 3.0 # Stop loss = entry +/- 3*ATR (was 2*ATR) - wider SL
     require_close_above: true
 
-# Cost model (use broker's actual costs)
+    # TREND FILTER - Only trade in direction of trend
+    use_trend_filter: true
+    trend_ema_period: 50   # 50-period EMA for trend direction
+
+    # ADX FILTER - Only trade when market is trending
+    use_adx_filter: true
+    adx_period: 14
+    adx_threshold: 20      # ADX > 20 = trending market
+
+    # TIME FILTER - Avoid low liquidity hours
+    use_time_filter: true
+    trading_start_hour: 7  # 7 AM UTC (London open)
+    trading_end_hour: 20   # 8 PM UTC (before Asian session)
+
+    # RSI FILTER - Avoid overbought/oversold entries
+    use_rsi_filter: true
+    rsi_period: 14
+    rsi_overbought: 70     # Don't go LONG if RSI > 70
+    rsi_oversold: 30       # Don't go SHORT if RSI < 30
+
+    # TRAILING STOP - Lock in profits as price moves
+    trailing_stop:
+      enabled: true
+      method: atr_based    # "atr_based" or "fixed_pips"
+      atr_multiplier: 2.5  # Trail at 2.5*ATR behind peak price (was 2.0)
+      activation_profit_atr: 2.0  # Activate after 2*ATR profit (was 1.0) - more room
+      step_pips: 10.0      # Min SL improvement in pips (was 5.0)
+
+    # PARTIAL TAKE PROFIT - Scale out of winning trades
+    partial_tp:
+      enabled: true
+      first_target_r: 2.0  # First partial at 2R (was 1R) - let winners run more
+      first_close_pct: 30  # Close 30% at first target (was 50%) - keep more position
+      move_sl_to_breakeven: true  # Move SL to entry after partial
+
+  # Per-symbol parameter overrides
+  # Different instruments need different settings
+  symbol_params:
+    XAUUSD:
+      sl_atr_multiplier: 5.0   # Gold needs much wider stops
+      lookback: 15             # Shorter lookback = more signals
+      use_time_filter: false   # Gold trades 24hrs, no time restriction
+      use_adx_filter: false    # Gold has different volatility patterns
+    USDJPY:
+      sl_atr_multiplier: 2.5   # JPY pairs need slightly wider stops
+    GBPUSD:
+      sl_atr_multiplier: 3.5   # GBP is volatile
+    EURUSD:
+      sl_atr_multiplier: 3.0   # Standard forex settings
+
+# Cost model - Adjust for your broker
 costs:
-  commission_per_lot: 7.0
+  commission_per_lot: 6.0   # Your broker's commission (round trip)
   commission_type: per_lot
 
   slippage_model: fixed_pips
-  slippage_pips: 0.5
+  slippage_pips: 0.3
 
   use_provided_spread: true
-  default_spread_pips: 1.5
+  default_spread_pips: 0.1
 
-# Risk management - TIGHTER for live trading
+# Risk management
 risk:
-  # Per-trade limits - START CONSERVATIVE
-  max_risk_per_trade_pct: 0.5   # Only risk 0.5% per trade
-  max_position_size_lots: 0.1   # Max 0.1 lots (10k units)
+  # Per-trade limits
+  max_risk_per_trade_pct: 5.0   # Risk 5% per trade
+  max_position_size_lots: 0.1   # Max 0.1 lots
   min_position_size_lots: 0.01  # Micro lots
 
   # Portfolio limits
-  max_open_positions: 1         # Only 1 position at a time to start
-  max_exposure_per_currency_pct: 20.0
-  max_total_exposure_pct: 50.0  # Conservative exposure
-  max_leverage: 5.0             # Low leverage
+  max_open_positions: 2
+  max_exposure_per_currency_pct: 2000.0
+  max_total_exposure_pct: 3000.0
+  max_leverage: 30.0
 
-  # Kill switches - CRITICAL
-  daily_loss_limit_pct: 2.0     # Stop if daily loss > 2%
-  max_drawdown_pct: 5.0         # Kill switch at 5% drawdown
+  # Kill switches
+  daily_loss_limit_pct: 15.0
+  max_drawdown_pct: 25.0
   close_positions_on_kill: true
 
   # Market condition filters
-  max_spread_pips: 3.0          # Skip if spread too wide
-  stale_price_seconds: 30.0     # Skip if price > 30s old
+  max_spread_pips: 50.0  # Allow wider spreads for gold
+  stale_price_seconds: 30.0
 
   # Anti-pattern protections
   no_martingale: true
   no_revenge_trading: true
-  revenge_cooldown_bars: 10     # Wait 10 bars after loss
+  revenge_cooldown_bars: 10
+
+# News filter - blocks trading around high-impact events
+news_filter:
+  enabled: true
+  minutes_before: 30
+  minutes_after: 15
+  min_impact: high
+
+  # Finnhub API key (optional but recommended)
+  # Get your FREE API key at: https://finnhub.io/
+  finnhub_api_key: null  # Replace with: "your_api_key_here"
+
+# Telegram notifications (optional)
+# Setup:
+#   1. Message @BotFather on Telegram, send /newbot, follow prompts
+#   2. Copy the bot token you receive
+#   3. Message @userinfobot on Telegram to get your chat_id
+telegram:
+  enabled: true                    # Set to true after adding credentials
+  chat_id: "7001118664"       # From @BotFather
+  bot_token: "8505969925:AAEb19XSiZ4QRo3IbaW01Nbmd3wSo4PJxpI"           # From @userinfobot
+
+  # What to notify about
+  notify_on_trade: true
+  notify_on_close: true
+  notify_on_error: true
+  notify_on_kill_switch: true
+  notify_daily_summary: false
 
 # Safety settings
-max_runtime_hours: null         # null = run until stopped
-close_positions_on_exit: false  # Set to true if you want auto-close
+max_runtime_hours: null
+close_positions_on_exit: false
 heartbeat_interval_seconds: 60.0
 
 # Logging

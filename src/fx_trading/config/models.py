@@ -52,11 +52,11 @@ class RiskConfig(BaseModel):
     max_open_positions: int = Field(default=5, ge=1, description="Max concurrent open positions")
     max_exposure_per_currency_pct: float = Field(default=20.0, gt=0, le=100.0, description="Max % exposure to single currency")
     max_total_exposure_pct: float = Field(default=100.0, gt=0, description="Max total exposure as % of equity")
-    max_leverage: float = Field(default=10.0, ge=1.0, le=50.0, description="Max allowed leverage")
+    max_leverage: float = Field(default=10.0, ge=1.0, le=1000.0, description="Max allowed leverage")
 
     # Kill switches
-    daily_loss_limit_pct: float = Field(default=3.0, gt=0, le=10.0, description="Stop trading if daily loss exceeds %")
-    max_drawdown_pct: float = Field(default=10.0, gt=0, le=30.0, description="Kill switch: max drawdown %")
+    daily_loss_limit_pct: float = Field(default=3.0, gt=0, le=50.0, description="Stop trading if daily loss exceeds %")
+    max_drawdown_pct: float = Field(default=10.0, gt=0, le=50.0, description="Kill switch: max drawdown %")
     close_positions_on_kill: bool = Field(default=True, description="Close all positions when kill switch triggers")
 
     # Market condition filters
