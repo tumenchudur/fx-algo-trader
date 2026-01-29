@@ -50,7 +50,7 @@ class RiskConfig(BaseModel):
 
     # Portfolio risk limits
     max_open_positions: int = Field(default=5, ge=1, description="Max concurrent open positions")
-    max_exposure_per_currency_pct: float = Field(default=20.0, gt=0, le=100.0, description="Max % exposure to single currency")
+    max_exposure_per_currency_pct: float = Field(default=20.0, gt=0, le=1000.0, description="Max % exposure to single currency")
     max_total_exposure_pct: float = Field(default=100.0, gt=0, description="Max total exposure as % of equity")
     max_leverage: float = Field(default=10.0, ge=1.0, le=1000.0, description="Max allowed leverage")
 
@@ -151,8 +151,9 @@ class BacktestConfig(BaseModel):
     run_id: Optional[str] = Field(default=None, description="Unique run identifier")
     output_dir: Path = Field(default=Path("runs"), description="Output directory for results")
 
-    # Data settings
-    data_path: Path = Field(description="Path to processed data")
+    # Data settings - either data_path (single file) or data_dir (multi-symbol directory)
+    data_path: Optional[Path] = Field(default=None, description="Path to single data file")
+    data_dir: Optional[Path] = Field(default=None, description="Directory containing {SYMBOL}_M5.parquet files")
     symbols: list[str] = Field(default_factory=lambda: ["EURUSD"])
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None

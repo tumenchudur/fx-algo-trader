@@ -82,13 +82,20 @@ class VolatilityBreakoutStrategy(Strategy):
         self.rsi_overbought = self.params.get("rsi_overbought", 70)
         self.rsi_oversold = self.params.get("rsi_oversold", 30)
 
+        # Volatility regime filter parameters
+        self.use_volatility_regime_filter = self.params.get("use_volatility_regime_filter", False)
+        self.min_atr_percentile = self.params.get("min_atr_percentile", 20)
+        self.max_atr_percentile = self.params.get("max_atr_percentile", 80)
+        self.volatility_lookback = self.params.get("volatility_lookback", 100)
+
         logger.info(
             f"VolatilityBreakout params: lookback={self.lookback}, "
             f"atr_period={self.atr_period}, atr_threshold={self.atr_threshold}, "
             f"trend_ema={self.trend_ema_period}, use_trend_filter={self.use_trend_filter}, "
             f"adx_threshold={self.adx_threshold}, use_adx_filter={self.use_adx_filter}, "
             f"time_filter={self.use_time_filter} ({self.trading_start_hour}-{self.trading_end_hour} UTC), "
-            f"rsi_filter={self.use_rsi_filter} (period={self.rsi_period}, OB={self.rsi_overbought}, OS={self.rsi_oversold})"
+            f"rsi_filter={self.use_rsi_filter} (period={self.rsi_period}, OB={self.rsi_overbought}, OS={self.rsi_oversold}), "
+            f"vol_regime_filter={self.use_volatility_regime_filter} (min={self.min_atr_percentile}%, max={self.max_atr_percentile}%)"
         )
 
     def generate_signals(
@@ -116,12 +123,23 @@ class VolatilityBreakoutStrategy(Strategy):
 
         # Get current bar and historical data (NO LOOKAHEAD)
         current_bar = data.iloc[current_index]
-        historical = data.iloc[:current_index + 1]
 
         # Extract symbol for per-symbol parameter lookups
         symbol = current_bar.get("symbol", self.symbols[0]) if hasattr(current_bar, "get") else self.symbols[0]
         if hasattr(symbol, "iloc"):
             symbol = symbol.iloc[0] if len(symbol) > 0 else self.symbols[0]
+
+        # IMPORTANT: Filter historical data by symbol for correct indicator calculation
+        # In multi-symbol mode, data is interleaved - we must only use same-symbol data
+        all_historical = data.iloc[:current_index + 1]
+        if "symbol" in all_historical.columns:
+            historical = all_historical[all_historical["symbol"] == symbol]
+        else:
+            historical = all_historical
+
+        # Check if we have enough symbol-specific data
+        if len(historical) < min_required:
+            return signals
 
         # TIME FILTER: Check if we're in trading hours (supports per-symbol override)
         use_time_filter = self.get_param("use_time_filter", symbol, self.use_time_filter)
@@ -132,7 +150,7 @@ class VolatilityBreakoutStrategy(Strategy):
                 if not (self.trading_start_hour <= hour < self.trading_end_hour):
                     return signals  # Outside trading hours
 
-        # Calculate ATR indicators using only past data
+        # Calculate ATR indicators using only past data for THIS symbol
         atr, atr_series = self._calculate_atr(historical)
         avg_atr = atr_series.rolling(self.atr_period * 2).mean().iloc[-1]
 
@@ -144,6 +162,17 @@ class VolatilityBreakoutStrategy(Strategy):
 
         if not volatility_expanding:
             return signals
+
+        # VOLATILITY REGIME FILTER: Skip very low or very high volatility periods
+        atr_percentile = None
+        if self.use_volatility_regime_filter:
+            atr_percentile = self._calculate_atr_percentile(atr_series)
+            if atr_percentile < self.min_atr_percentile:
+                logger.debug(f"Vol regime filter: ATR percentile {atr_percentile:.1f}% < min {self.min_atr_percentile}%")
+                return signals  # Too quiet - likely false breakouts
+            if atr_percentile > self.max_atr_percentile:
+                logger.debug(f"Vol regime filter: ATR percentile {atr_percentile:.1f}% > max {self.max_atr_percentile}%")
+                return signals  # Too volatile - wide stops, unpredictable
 
         # TREND FILTER: Calculate EMA and check trend direction
         trend_direction = None
@@ -167,8 +196,11 @@ class VolatilityBreakoutStrategy(Strategy):
             if pd.isna(adx) or adx < self.adx_threshold:
                 return signals  # Market not trending enough
 
-        # Calculate breakout levels (excluding current bar)
-        lookback_data = data.iloc[current_index - self.lookback:current_index]
+        # Calculate breakout levels (excluding current bar) - use symbol-filtered data
+        # Get last N bars from the symbol-filtered historical data (excluding current bar)
+        lookback_data = historical.iloc[-self.lookback - 1:-1] if len(historical) > self.lookback else historical.iloc[:-1]
+        if len(lookback_data) < self.lookback // 2:  # Need at least half the lookback period
+            return signals
         upper_level = lookback_data["high"].max()
         lower_level = lookback_data["low"].min()
 
@@ -241,6 +273,7 @@ class VolatilityBreakoutStrategy(Strategy):
                     "lower_level": lower_level,
                     "atr": atr,
                     "avg_atr": avg_atr,
+                    "atr_percentile": atr_percentile,
                     "trend_direction": trend_direction,
                     "adx": adx if use_adx_filter else None,
                     "ema": current_ema if self.use_trend_filter else None,
@@ -331,6 +364,34 @@ class VolatilityBreakoutStrategy(Strategy):
         adx = dx.rolling(self.adx_period).mean()
 
         return adx.iloc[-1]
+
+    def _calculate_atr_percentile(self, atr_series: pd.Series) -> float:
+        """
+        Calculate where current ATR sits in recent history.
+
+        Returns percentile (0-100) of current ATR vs last N periods.
+        - Low percentile (<20): Very quiet market, breakouts likely to fail
+        - High percentile (>80): Very volatile, wide stops needed
+        - Middle (20-80): Normal volatility, good for breakout trading
+
+        Args:
+            atr_series: ATR time series
+
+        Returns:
+            Percentile of current ATR (0-100)
+        """
+        # Get recent ATR values for comparison
+        recent_atr = atr_series.tail(self.volatility_lookback).dropna()
+
+        if len(recent_atr) < 20:  # Need minimum history
+            return 50.0  # Default to middle if not enough data
+
+        current_atr = atr_series.iloc[-1]
+
+        # Calculate percentile rank
+        percentile = (recent_atr < current_atr).sum() / len(recent_atr) * 100
+
+        return percentile
 
     def _calculate_signal_strength(self, atr: float, avg_atr: float, adx: float) -> float:
         """

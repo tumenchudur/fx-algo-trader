@@ -48,6 +48,51 @@ def get_contract_size(symbol: str) -> float:
     return 100000.0
 
 
+def get_exposure_in_usd(symbol: str, size: float, entry_price: float) -> float:
+    """
+    Calculate position exposure in USD.
+
+    Handles different quote currencies correctly:
+    - EURUSD, GBPUSD, etc (quote=USD): exposure = size * contract * price
+    - USDJPY, USDCHF, etc (base=USD): exposure = size * contract (already in USD)
+    - XAUUSD (commodities quoted in USD): exposure = size * contract * price
+
+    Args:
+        symbol: Trading symbol
+        size: Position size in lots
+        entry_price: Entry price
+
+    Returns:
+        Exposure value in USD
+    """
+    contract_size = get_contract_size(symbol)
+    symbol_upper = symbol.upper()
+
+    # Commodities quoted in USD (XAU, XAG, XTI, etc)
+    if symbol_upper.startswith(("XAU", "XAG", "XTI", "XBR")):
+        return size * contract_size * entry_price
+
+    # Standard forex pairs (6 chars)
+    if len(symbol_upper) >= 6:
+        base = symbol_upper[:3]
+        quote = symbol_upper[3:6]
+
+        # Quote currency is USD (EURUSD, GBPUSD, AUDUSD, etc)
+        if quote == "USD":
+            return size * contract_size * entry_price
+
+        # Base currency is USD (USDJPY, USDCHF, USDCAD, etc)
+        if base == "USD":
+            return size * contract_size  # Already in USD
+
+        # Cross pairs (EURGBP, EURJPY, etc) - approximate using entry price
+        # This is simplified; proper handling would need USD conversion rates
+        return size * contract_size * entry_price
+
+    # Fallback
+    return size * contract_size * entry_price
+
+
 class Side(str, Enum):
     """Order/position side."""
 
@@ -247,22 +292,33 @@ class Position:
 
     def update_pnl(self, bid: float, ask: float) -> float:
         """
-        Update and return unrealized PnL.
+        Update and return unrealized PnL in USD.
 
         Uses bid for long exits (sell), ask for short exits (buy to cover).
         Contract size is determined by symbol type (forex=100k, gold=100, etc).
+        Converts P/L to USD for pairs where USD is not the quote currency.
         """
         contract_size = get_contract_size(self.symbol)
 
         if self.side == Side.LONG:
             exit_price = bid
-            self.unrealized_pnl = (exit_price - self.entry_price) * self.size * contract_size
+            raw_pnl = (exit_price - self.entry_price) * self.size * contract_size
         elif self.side == Side.SHORT:
             exit_price = ask
-            self.unrealized_pnl = (self.entry_price - exit_price) * self.size * contract_size
+            raw_pnl = (self.entry_price - exit_price) * self.size * contract_size
         else:
-            self.unrealized_pnl = 0.0
+            exit_price = bid
+            raw_pnl = 0.0
 
+        # Convert P/L to USD for pairs where USD is not the quote currency
+        symbol_upper = self.symbol.upper()
+        if len(symbol_upper) >= 6:
+            quote = symbol_upper[3:6]
+            if quote != "USD":
+                # P/L is in quote currency, convert to USD using current price
+                raw_pnl = raw_pnl / exit_price
+
+        self.unrealized_pnl = raw_pnl
         self.current_price = exit_price
         return self.unrealized_pnl
 
@@ -332,14 +388,27 @@ class Trade:
         self.total_slippage = self.entry_slippage + self.exit_slippage
 
     def calculate_pnl(self) -> None:
-        """Calculate gross and net PnL using symbol-specific contract size."""
+        """Calculate gross and net PnL in USD using symbol-specific contract size."""
         contract_size = get_contract_size(self.symbol)
 
         if self.side == Side.LONG:
-            self.gross_pnl = (self.exit_price - self.entry_price) * self.size * contract_size
+            raw_pnl = (self.exit_price - self.entry_price) * self.size * contract_size
         elif self.side == Side.SHORT:
-            self.gross_pnl = (self.entry_price - self.exit_price) * self.size * contract_size
+            raw_pnl = (self.entry_price - self.exit_price) * self.size * contract_size
+        else:
+            raw_pnl = 0.0
 
+        # Convert P/L to USD for pairs where USD is not the quote currency
+        # For USDJPY: P/L is in JPY, divide by exit rate to get USD
+        # For EURUSD, GBPUSD: P/L is already in USD
+        symbol_upper = self.symbol.upper()
+        if len(symbol_upper) >= 6:
+            quote = symbol_upper[3:6]
+            if quote != "USD":
+                # P/L is in quote currency, convert to USD
+                raw_pnl = raw_pnl / self.exit_price
+
+        self.gross_pnl = raw_pnl
         self.net_pnl = self.gross_pnl - self.total_commission - self.total_slippage
 
 

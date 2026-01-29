@@ -1,0 +1,104 @@
+# Optimized Backtest Configuration
+# ================================
+# Key changes from baseline:
+# - Time filter enabled (London/NY session only)
+# - Volatility regime filter (avoid extremes)
+# - ADX filter enabled (trending markets only)
+# - Lower R:R ratio (3.0 vs 5.0) for more achievable TP
+# - Shorter time exit (6 hours vs 12 hours)
+# - Tighter stops for losing pairs
+
+run_id: bt_optimized
+
+# Data settings
+data_dir: data/sample
+symbols:
+  - EURUSD
+  - GBPUSD
+  - USDJPY
+
+# Account settings
+initial_capital: 200.0
+base_currency: USD
+
+# Output
+output_dir: runs
+
+# Strategy configuration
+strategy:
+  name: volatility_breakout_optimized
+  strategy_type: volatility_breakout
+  enabled: true
+  symbols:
+    - EURUSD
+    - GBPUSD
+    - USDJPY
+  timeframe: M5
+
+  # Entry/exit settings
+  use_stop_loss: true
+  use_take_profit: true
+  risk_reward_ratio: 3.0         # Changed from 5.0 - more achievable
+  time_exit_bars: 72             # 6 hours on M5 (was 144 = 12 hours)
+
+  params:
+    # Core breakout parameters
+    lookback: 20
+    atr_period: 14
+    atr_threshold: 1.0
+    sl_atr_multiplier: 2.0       # Default, overridden per symbol
+    require_close_above: true
+
+    # Trend filter - ENABLED
+    use_trend_filter: true
+    trend_ema_period: 50
+
+    # ADX filter - ENABLED (only trade trending markets)
+    use_adx_filter: true
+    adx_period: 14
+    adx_threshold: 25            # Slightly higher than default 20
+
+    # Time filter - ENABLED (London/NY overlap)
+    use_time_filter: true
+    trading_start_hour: 7        # 7 AM UTC (London open)
+    trading_end_hour: 17         # 5 PM UTC (before Asia)
+
+    # RSI filter - ENABLED
+    use_rsi_filter: true
+    rsi_period: 14
+    rsi_overbought: 70
+    rsi_oversold: 30
+
+    # Volatility regime filter - NEW
+    use_volatility_regime_filter: true
+    min_atr_percentile: 20       # Skip very quiet periods
+    max_atr_percentile: 80       # Skip extremely volatile periods
+    volatility_lookback: 100     # 100 bars = ~8 hours on M5
+
+  # Per-symbol parameter overrides
+  symbol_params:
+    EURUSD:
+      sl_atr_multiplier: 2.0     # Tightest - most liquid
+    GBPUSD:
+      sl_atr_multiplier: 2.5     # Slightly wider - more volatile
+    USDJPY:
+      sl_atr_multiplier: 2.5     # Slightly wider
+
+# Cost model - Exness Pro account
+costs:
+  commission_per_lot: 0.0
+  slippage_pips: 0.2
+  default_spread_pips: 0.1
+
+# Risk management
+risk:
+  max_risk_per_trade_pct: 5.0
+  max_position_size_lots: 0.1
+  min_position_size_lots: 0.01
+  max_open_positions: 3
+  max_leverage: 1000.0
+  daily_loss_limit_pct: 15.0
+  max_drawdown_pct: 25.0
+  max_spread_pips: 50.0
+
+random_seed: 42

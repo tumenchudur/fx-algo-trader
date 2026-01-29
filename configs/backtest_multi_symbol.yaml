@@ -1,0 +1,129 @@
+# Multi-Symbol Backtest Configuration
+# ====================================
+# Runs all 4 pairs simultaneously like live trading
+# Data: 1 month (Dec 30, 2025 - Jan 29, 2026)
+
+run_id: bt_multi_symbol_1month
+
+# Data settings - directory with all pair data files
+# Note: XAUUSD excluded because yfinance gold futures data is inaccurate for spot forex
+# Note: USDJPY excluded - strategy not profitable on this pair
+data_dir: data/sample
+symbols:
+  - EURUSD
+  - GBPUSD
+  - USDJPY  # Re-enabled - interactions affect other pairs
+  # - XAUUSD  # Requires proper spot gold data from broker
+
+# Account settings
+initial_capital: 200.0  # Match demo account
+base_currency: USD
+
+# Output
+output_dir: runs
+
+# Strategy configuration
+strategy:
+  name: volatility_breakout_multi
+  strategy_type: volatility_breakout
+  enabled: true
+  symbols:
+    - EURUSD
+    - GBPUSD
+    - USDJPY  # Re-enabled
+    # - XAUUSD  # Excluded until proper spot data available
+  timeframe: M5
+
+  # Entry/exit settings
+  use_stop_loss: true
+  use_take_profit: true
+  risk_reward_ratio: 5.0  # 5:1 risk reward ratio
+  time_exit_bars: 144  # Exit after 12 hours if not stopped out
+
+  # Strategy-specific parameters
+  params:
+    # Core breakout settings
+    lookback: 20
+    atr_period: 14
+    atr_threshold: 1.0
+    sl_atr_multiplier: 3.0
+    require_close_above: true
+
+    # Trend filter
+    use_trend_filter: true
+    trend_ema_period: 50
+
+    # ADX filter - disabled for more trades
+    use_adx_filter: false
+    adx_period: 14
+    adx_threshold: 20
+
+    # Time filter - disabled for 24hr trading
+    use_time_filter: false
+    trading_start_hour: 7
+    trading_end_hour: 20
+
+    # RSI Filter
+    use_rsi_filter: true
+    rsi_period: 14
+    rsi_overbought: 70
+    rsi_oversold: 30
+
+    # Trailing Stop
+    trailing_stop:
+      enabled: true
+      method: atr_based
+      atr_multiplier: 2.5
+      activation_profit_atr: 2.0
+      step_pips: 10.0
+
+    # Partial Take Profit
+    partial_tp:
+      enabled: true
+      first_target_r: 2.0
+      first_close_pct: 30
+      move_sl_to_breakeven: true
+
+  # Per-symbol parameter overrides
+  symbol_params:
+    XAUUSD:
+      sl_atr_multiplier: 5.0   # Gold needs much wider stops
+      lookback: 15             # Shorter lookback = more signals
+      use_time_filter: false
+      use_adx_filter: false
+    USDJPY:
+      sl_atr_multiplier: 3.5   # JPY pairs need slightly wider stops
+    GBPUSD:
+      sl_atr_multiplier: 3.5   # GBP is volatile
+    EURUSD:
+      sl_atr_multiplier: 3.0   # Standard forex settings
+
+# Cost model - Exness Pro account
+costs:
+  commission_per_lot: 0.0   # Exness Pro has no commission
+  commission_type: per_lot
+  slippage_model: fixed_pips
+  slippage_pips: 0.2
+  use_provided_spread: true
+  default_spread_pips: 0.1  # Exness Pro: 0.10 pips typical spread
+  spread_multiplier: 1.0
+
+# Risk management
+risk:
+  max_risk_per_trade_pct: 5.0
+  max_position_size_lots: 0.1
+  min_position_size_lots: 0.01
+  max_open_positions: 4         # Allow 1 per symbol
+  max_exposure_per_currency_pct: 50.0
+  max_total_exposure_pct: 200.0  # Higher for multi-pair
+  max_leverage: 1000.0
+  daily_loss_limit_pct: 15.0
+  max_drawdown_pct: 25.0
+  close_positions_on_kill: true
+  max_spread_pips: 50.0
+  stale_price_seconds: 60.0
+  no_martingale: true
+  no_revenge_trading: true
+  revenge_cooldown_bars: 5
+
+random_seed: 42

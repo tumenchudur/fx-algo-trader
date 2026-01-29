@@ -22,6 +22,7 @@ from fx_trading.types.models import (
     PortfolioSnapshot,
     DailySummary,
     get_contract_size,
+    get_exposure_in_usd,
 )
 
 
@@ -411,23 +412,23 @@ class PortfolioManager:
         )
 
     def get_total_exposure(self) -> float:
-        """Get total position exposure in account currency."""
+        """Get total position exposure in USD."""
         return sum(
-            p.size * get_contract_size(p.symbol) * p.current_price
+            get_exposure_in_usd(p.symbol, p.size, p.current_price)
             for p in self.positions.values()
         )
 
     def get_exposure_by_currency(self) -> dict[str, float]:
-        """Get exposure breakdown by currency."""
+        """Get exposure breakdown by currency (in USD equivalent)."""
         exposure = {}
 
         for position in self.positions.values():
             # Extract currencies from symbol (e.g., EURUSD -> EUR, USD)
             base = position.symbol[:3]
-            quote = position.symbol[3:]
+            quote = position.symbol[3:6] if len(position.symbol) >= 6 else "USD"
 
-            contract_size = get_contract_size(position.symbol)
-            value = position.size * contract_size * position.current_price
+            # Use correct USD exposure calculation
+            value = get_exposure_in_usd(position.symbol, position.size, position.current_price)
 
             if position.side == Side.LONG:
                 exposure[base] = exposure.get(base, 0) + value
