@@ -1,0 +1,63 @@
+# Backtest Configuration - WITHOUT RSI Filter (baseline comparison)
+run_id: bt_no_rsi_baseline
+
+data_path: data/sample/EURUSD_M5.parquet
+symbols: [EURUSD]
+initial_capital: 10000.0
+base_currency: USD
+output_dir: runs
+
+strategy:
+  name: volatility_breakout_no_rsi
+  strategy_type: volatility_breakout
+  enabled: true
+  symbols: [EURUSD]
+  timeframe: M5
+  use_stop_loss: true
+  use_take_profit: true
+  risk_reward_ratio: 3.0
+  time_exit_bars: 48
+
+  params:
+    lookback: 20
+    atr_period: 14
+    atr_threshold: 1.0
+    sl_atr_multiplier: 2.0
+    require_close_above: true
+    use_trend_filter: true
+    trend_ema_period: 50
+    use_adx_filter: true
+    adx_period: 14
+    adx_threshold: 20
+    use_time_filter: true
+    trading_start_hour: 7
+    trading_end_hour: 20
+    # RSI DISABLED for comparison
+    use_rsi_filter: false
+
+costs:
+  commission_per_lot: 7.0
+  commission_type: per_lot
+  slippage_model: fixed_pips
+  slippage_pips: 0.5
+  use_provided_spread: true
+  default_spread_pips: 1.5
+
+risk:
+  max_risk_per_trade_pct: 1.0
+  max_position_size_lots: 5.0
+  min_position_size_lots: 0.01
+  max_open_positions: 3
+  max_exposure_per_currency_pct: 30.0
+  max_total_exposure_pct: 100.0
+  max_leverage: 10.0
+  daily_loss_limit_pct: 3.0
+  max_drawdown_pct: 10.0
+  close_positions_on_kill: true
+  max_spread_pips: 3.0
+  stale_price_seconds: 60.0
+  no_martingale: true
+  no_revenge_trading: true
+  revenge_cooldown_bars: 5
+
+random_seed: 42
