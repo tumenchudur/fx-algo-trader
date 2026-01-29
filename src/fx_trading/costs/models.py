@@ -348,6 +348,7 @@ class FillCalculator:
         mid: Optional[float] = None,
         volatility: Optional[float] = None,
         is_entry: bool = True,
+        timestamp: Optional["datetime"] = None,
     ) -> Fill:
         """
         Calculate complete fill with all costs.
@@ -359,6 +360,7 @@ class FillCalculator:
             mid: Current mid price
             volatility: Current volatility (for slippage)
             is_entry: True for entry, False for exit
+            timestamp: Bar timestamp for the fill (uses current time if not provided)
 
         Returns:
             Fill with all costs calculated
@@ -395,7 +397,7 @@ class FillCalculator:
         fill = Fill(
             id=uuid4(),
             order_id=order.id,
-            timestamp=datetime.utcnow(),
+            timestamp=timestamp if timestamp is not None else datetime.utcnow(),
             symbol=order.symbol,
             side=order.side,
             size=order.size,

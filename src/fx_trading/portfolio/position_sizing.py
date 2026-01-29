@@ -9,7 +9,7 @@ from typing import Optional
 from loguru import logger
 
 from fx_trading.config.models import RiskConfig
-from fx_trading.types.models import Side, get_contract_size
+from fx_trading.types.models import Side, get_contract_size, get_exposure_in_usd
 
 
 class PositionSizer:
@@ -217,9 +217,8 @@ class PositionSizer:
         Returns:
             Tuple of (adjusted_size, was_limited)
         """
-        # Calculate proposed exposure using symbol-specific contract size
-        contract_size = get_contract_size(symbol)
-        proposed_exposure = proposed_size * contract_size * entry_price
+        # Calculate proposed exposure in USD (handles different quote currencies)
+        proposed_exposure = get_exposure_in_usd(symbol, proposed_size, entry_price)
         total_exposure = current_exposure + proposed_exposure
 
         # Check max total exposure
@@ -231,7 +230,14 @@ class PositionSizer:
             if available <= 0:
                 return 0.0, True
 
-            adjusted_size = available / (contract_size * entry_price)
+            # Reverse calculate size from available exposure
+            contract_size = get_contract_size(symbol)
+            symbol_upper = symbol.upper()
+            base = symbol_upper[:3] if len(symbol_upper) >= 6 else ""
+            if base == "USD":
+                adjusted_size = available / contract_size
+            else:
+                adjusted_size = available / (contract_size * entry_price)
             adjusted_size = self._constrain_size(adjusted_size)
 
             logger.warning(
@@ -262,8 +268,8 @@ class PositionSizer:
         Returns:
             Tuple of (adjusted_size, was_limited)
         """
-        contract_size = get_contract_size(symbol)
-        proposed_exposure = proposed_size * contract_size * entry_price
+        # Calculate proposed exposure in USD (handles different quote currencies)
+        proposed_exposure = get_exposure_in_usd(symbol, proposed_size, entry_price)
         total_exposure = current_exposure + proposed_exposure
 
         current_leverage = total_exposure / equity if equity > 0 else 0
@@ -276,7 +282,14 @@ class PositionSizer:
             if available <= 0:
                 return 0.0, True
 
-            adjusted_size = available / (contract_size * entry_price)
+            # Reverse calculate size from available exposure
+            contract_size = get_contract_size(symbol)
+            symbol_upper = symbol.upper()
+            base = symbol_upper[:3] if len(symbol_upper) >= 6 else ""
+            if base == "USD":
+                adjusted_size = available / contract_size
+            else:
+                adjusted_size = available / (contract_size * entry_price)
             adjusted_size = self._constrain_size(adjusted_size)
 
             logger.warning(

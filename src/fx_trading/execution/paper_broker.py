@@ -96,12 +96,12 @@ class PaperBroker(Broker):
 
     def set_prices(self, prices: dict[str, PriceData]) -> None:
         """
-        Update current prices.
+        Update current prices (merges with existing prices for multi-symbol support).
 
         Args:
             prices: Dict of symbol -> PriceData
         """
-        self.current_prices = prices
+        self.current_prices.update(prices)
 
     def set_bar_index(self, index: int) -> None:
         """Set current bar index for time-based exits."""
@@ -159,6 +159,7 @@ class PaperBroker(Broker):
             ask=price_data.ask,
             mid=price_data.mid,
             is_entry=True,
+            timestamp=price_data.timestamp,
         )
 
         # Update order status
@@ -248,6 +249,7 @@ class PaperBroker(Broker):
             ask=price_data.ask,
             mid=price_data.mid,
             is_entry=False,
+            timestamp=price_data.timestamp,
         )
 
         # Close position in portfolio

@@ -166,7 +166,7 @@ class Backtester:
 
     def load_data(self, data: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         """
-        Load data from config path or use provided DataFrame.
+        Load data from config path, data_dir (multi-symbol), or use provided DataFrame.
 
         Args:
             data: Optional pre-loaded DataFrame
@@ -176,15 +176,63 @@ class Backtester:
         """
         if data is not None:
             self.data = data
-        else:
+        elif self.config.data_dir is not None:
+            # Multi-symbol mode: load from directory
+            self.data = self._load_multi_symbol_data()
+        elif self.config.data_path is not None:
             self.data = self.ingestor.load_data(
                 path=self.config.data_path,
                 start_date=self.config.start_date,
                 end_date=self.config.end_date,
             )
+        else:
+            raise ValueError("Either data_path or data_dir must be specified")
 
         logger.info(f"Loaded {len(self.data)} bars from {self.data.index[0]} to {self.data.index[-1]}")
         return self.data
+
+    def _load_multi_symbol_data(self) -> pd.DataFrame:
+        """
+        Load and combine data for multiple symbols from a directory.
+
+        Expects files named {SYMBOL}_M5.parquet in the data_dir.
+
+        Returns:
+            Combined DataFrame sorted by timestamp
+        """
+        from pathlib import Path
+
+        data_dir = Path(self.config.data_dir)
+        all_dfs = []
+
+        for symbol in self.config.symbols:
+            file_path = data_dir / f"{symbol}_M5.parquet"
+            if not file_path.exists():
+                logger.warning(f"Data file not found for {symbol}: {file_path}")
+                continue
+
+            df = self.ingestor.load_data(
+                path=file_path,
+                start_date=self.config.start_date,
+                end_date=self.config.end_date,
+            )
+
+            # Ensure symbol column is set
+            df["symbol"] = symbol
+            all_dfs.append(df)
+            logger.info(f"Loaded {len(df)} bars for {symbol}")
+
+        if not all_dfs:
+            raise ValueError(f"No data files found in {data_dir}")
+
+        # Combine all dataframes
+        combined = pd.concat(all_dfs, axis=0)
+
+        # Sort by timestamp to interleave all symbols chronologically
+        combined = combined.sort_index()
+
+        logger.info(f"Combined {len(combined)} total bars for {len(all_dfs)} symbols")
+        return combined
 
     def run(self, data: Optional[pd.DataFrame] = None) -> BacktestResult:
         """

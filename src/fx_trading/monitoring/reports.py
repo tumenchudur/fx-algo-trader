@@ -122,6 +122,48 @@ class ReportGenerator:
         .chart-container {{
             margin: 20px 0;
         }}
+        .filter-container {{
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }}
+        .filter-container label {{
+            font-weight: 600;
+            color: #333;
+        }}
+        .filter-btn {{
+            padding: 8px 16px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+        }}
+        .filter-btn:hover {{
+            background: #f0f0f0;
+        }}
+        .filter-btn.active {{
+            background: #1a1a2e;
+            color: white;
+            border-color: #1a1a2e;
+        }}
+        .table-summary {{
+            margin-top: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            font-size: 14px;
+            color: #666;
+        }}
+        .sortable {{
+            cursor: pointer;
+        }}
+        .sortable:hover {{
+            background: #e9ecef;
+        }}
         .footer {{
             text-align: center;
             color: #666;
@@ -313,10 +355,60 @@ class ReportGenerator:
 
         return html
 
-    def _generate_trades_table(self, trades_df: pd.DataFrame, max_rows: int = 50) -> str:
-        """Generate HTML table for trades."""
+    def _generate_symbol_breakdown(self, trades_df: pd.DataFrame) -> str:
+        """Generate per-symbol P&L breakdown."""
         if trades_df.empty:
             return ""
+
+        symbols = trades_df["symbol"].unique()
+        breakdown_rows = []
+
+        for symbol in sorted(symbols):
+            symbol_trades = trades_df[trades_df["symbol"] == symbol]
+            total_pnl = symbol_trades["net_pnl"].sum()
+            trade_count = len(symbol_trades)
+            wins = (symbol_trades["net_pnl"] > 0).sum()
+            win_rate = wins / trade_count * 100 if trade_count > 0 else 0
+            pnl_class = "pnl-positive" if total_pnl >= 0 else "pnl-negative"
+
+            breakdown_rows.append(f"""
+            <tr>
+                <td><strong>{symbol}</strong></td>
+                <td>{trade_count}</td>
+                <td>{win_rate:.1f}%</td>
+                <td class="{pnl_class}">${total_pnl:.2f}</td>
+            </tr>
+            """)
+
+        return f"""
+        <div class="card">
+            <h2>Per-Symbol Breakdown</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Trades</th>
+                        <th>Win Rate</th>
+                        <th>P&L</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join(breakdown_rows)}
+                </tbody>
+            </table>
+        </div>
+        """
+
+    def _generate_trades_table(self, trades_df: pd.DataFrame, max_rows: int = 100) -> str:
+        """Generate HTML table for trades with filtering."""
+        if trades_df.empty:
+            return ""
+
+        # Get unique symbols for filter buttons
+        symbols = sorted(trades_df["symbol"].unique())
+        filter_buttons = '<button class="filter-btn active" data-symbol="all">All</button>\n'
+        for symbol in symbols:
+            filter_buttons += f'<button class="filter-btn" data-symbol="{symbol}">{symbol}</button>\n'
 
         # Take recent trades
         df = trades_df.tail(max_rows).copy()
@@ -324,9 +416,15 @@ class ReportGenerator:
         rows = []
         for _, trade in df.iterrows():
             pnl_class = "pnl-positive" if trade["net_pnl"] >= 0 else "pnl-negative"
+            entry_time = trade["entry_time"]
+            if hasattr(entry_time, "strftime"):
+                entry_time_str = entry_time.strftime("%Y-%m-%d %H:%M")
+            else:
+                entry_time_str = str(entry_time)[:16]
+
             rows.append(f"""
-            <tr>
-                <td>{trade['entry_time']}</td>
+            <tr data-symbol="{trade['symbol']}">
+                <td>{entry_time_str}</td>
                 <td>{trade['symbol']}</td>
                 <td>{trade['side']}</td>
                 <td>{trade['size']:.2f}</td>
@@ -337,19 +435,28 @@ class ReportGenerator:
             </tr>
             """)
 
+        # Generate per-symbol breakdown first
+        breakdown = self._generate_symbol_breakdown(trades_df)
+
         return f"""
+        {breakdown}
+
         <div class="card">
-            <h2>Recent Trades (Last {len(df)})</h2>
-            <table>
+            <h2>Trade History</h2>
+            <div class="filter-container">
+                <label>Filter by Symbol:</label>
+                {filter_buttons}
+            </div>
+            <table id="trades-table">
                 <thead>
                     <tr>
-                        <th>Entry Time</th>
+                        <th class="sortable" data-sort="time">Entry Time</th>
                         <th>Symbol</th>
                         <th>Side</th>
                         <th>Size</th>
                         <th>Entry</th>
                         <th>Exit</th>
-                        <th>P&L</th>
+                        <th class="sortable" data-sort="pnl">P&L</th>
                         <th>Exit Reason</th>
                     </tr>
                 </thead>
@@ -357,7 +464,45 @@ class ReportGenerator:
                     {''.join(rows)}
                 </tbody>
             </table>
+            <div class="table-summary" id="table-summary">
+                Showing {len(df)} trades
+            </div>
         </div>
+
+        <script>
+            // Symbol filter functionality
+            document.querySelectorAll('.filter-btn').forEach(btn => {{
+                btn.addEventListener('click', function() {{
+                    const symbol = this.dataset.symbol;
+
+                    // Update active button
+                    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+
+                    // Filter rows
+                    const rows = document.querySelectorAll('#trades-table tbody tr');
+                    let visibleCount = 0;
+                    let totalPnl = 0;
+
+                    rows.forEach(row => {{
+                        if (symbol === 'all' || row.dataset.symbol === symbol) {{
+                            row.style.display = '';
+                            visibleCount++;
+                            const pnlCell = row.querySelector('td:nth-child(7)');
+                            const pnlText = pnlCell.textContent.replace('$', '').replace(',', '');
+                            totalPnl += parseFloat(pnlText);
+                        }} else {{
+                            row.style.display = 'none';
+                        }}
+                    }});
+
+                    // Update summary
+                    const pnlClass = totalPnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+                    document.getElementById('table-summary').innerHTML =
+                        `Showing ${{visibleCount}} trades | Total P&L: <span class="${{pnlClass}}">${{totalPnl >= 0 ? '+' : ''}}${{totalPnl.toFixed(2)}}</span>`;
+                }});
+            }});
+        </script>
         """
 
     def generate_markdown_report(self, result: BacktestResult) -> str:

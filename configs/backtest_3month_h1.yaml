@@ -1,0 +1,74 @@
+# 3-Month Backtest Configuration (1-Hour Timeframe)
+# ==================================================
+# Using 1-hour data because yfinance limits 5m to 60 days
+
+run_id: bt_3month_h1
+
+# Data settings
+data_dir: data/sample
+symbols:
+  - EURUSD
+
+# Account settings
+initial_capital: 200.0
+base_currency: USD
+
+# Output
+output_dir: runs
+
+# Strategy configuration (adjusted for H1 timeframe)
+strategy:
+  name: volatility_breakout_h1
+  strategy_type: volatility_breakout
+  enabled: true
+  symbols:
+    - EURUSD
+  timeframe: H1
+
+  # Entry/exit settings
+  use_stop_loss: true
+  use_take_profit: true
+  risk_reward_ratio: 5.0
+  time_exit_bars: 12  # 12 hours on H1 (was 144 bars on M5 = 12 hours)
+
+  params:
+    lookback: 20
+    atr_period: 14
+    atr_threshold: 1.0
+    sl_atr_multiplier: 3.0
+    require_close_above: true
+    use_trend_filter: true
+    trend_ema_period: 50
+    use_adx_filter: false
+    use_time_filter: false
+    use_rsi_filter: true
+    rsi_period: 14
+    rsi_overbought: 70
+    rsi_oversold: 30
+
+  symbol_params:
+    USDJPY:
+      sl_atr_multiplier: 3.5
+    GBPUSD:
+      sl_atr_multiplier: 3.5
+    EURUSD:
+      sl_atr_multiplier: 3.0
+
+# Cost model - Exness Pro account
+costs:
+  commission_per_lot: 0.0
+  slippage_pips: 0.2
+  default_spread_pips: 0.1
+
+# Risk management
+risk:
+  max_risk_per_trade_pct: 5.0
+  max_position_size_lots: 0.1
+  min_position_size_lots: 0.01
+  max_open_positions: 3
+  max_leverage: 1000.0
+  daily_loss_limit_pct: 15.0
+  max_drawdown_pct: 25.0
+  max_spread_pips: 50.0
+
+random_seed: 42
