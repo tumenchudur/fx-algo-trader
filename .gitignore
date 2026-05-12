@@ -51,6 +51,13 @@ data/sample/*.parquet
 data/sample/*.csv
 data/processed/*.parquet
 data/processed/*.csv
+data/raw/
+data/sampl/
+data/test/
+data/yf/
+data/yf_d1/
+data/rates/
+data/long_history/
 !data/.gitkeep
 !data/sample/.gitkeep
 !data/processed/.gitkeep
