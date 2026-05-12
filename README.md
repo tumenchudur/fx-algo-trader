@@ -1,12 +1,36 @@
-# FX Trading System
+# FX Trading System — and the research that proved it doesn't have an edge
 
-A production-grade, quant-style trading system scaffold for FX (forex) trading with backtesting, risk management, and paper trading capabilities.
+A production-grade Python trading system (backtest engine, risk engine, paper /
+MT5 execution, walk-forward harness, Pydantic-validated configs) **and** the
+multi-week research log that disproved its own headline strategy.
+
+> If you're hiring a quant developer or considering a retail FX bot: **read
+> [`RESEARCH.md`](RESEARCH.md) first.** It documents 250+ strategy variants
+> tested across 21 years of D1 data, 2.8 years of H1 data, and ~14 months of M5
+> data, with non-overlapping trades, IS/OOS splits, realistic costs, and Welch
+> verification of survivors. **Headline result: the bundled
+> volatility-breakout strategy is a verified negative-EV signal on FX majors at
+> realistic costs. Only one tested strategy survives full validation: a
+> vol-targeted FX carry basket on D1 (Sharpe 0.26 NET, IS 0.17 / OOS 0.37).**
+
+This repo demonstrates two things that are individually rare and together
+genuinely uncommon in retail trading:
+1. **A working production-quality trading framework** (engine, risk, costs,
+   accounting, walk-forward, paper + MT5 execution).
+2. **The discipline to test it rigorously and publish the negative result.**
+
+The research scripts (`scripts/edge_*.py`, `scripts/carry_*.py`,
+`scripts/download_*.py`, `scripts/parse_bis_rates.py`) are reusable
+infrastructure: a non-overlapping-trade evaluator, IS/OOS splitter, realistic
+cost model, Welch-test verifier, and cross-asset signal builder. Any new
+strategy idea should be tested through them before going near live capital.
 
 ```
-⚠️ DISCLAIMER: This is an EDUCATIONAL trading system.
+⚠️ DISCLAIMER: This is an educational / portfolio system.
    Trading forex involves significant risk of loss.
-   Past performance does not guarantee future results.
    Use PAPER TRADING only. NO GUARANTEES OF PROFITABILITY.
+   The research in RESEARCH.md actively documents *why* this class of
+   retail strategy does not work at retail scale.
 ```
 
 ## System Overview
