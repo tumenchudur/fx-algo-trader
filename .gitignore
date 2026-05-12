@@ -86,6 +86,9 @@ configs/*_private.yaml
 # Generated reports
 live_report*.html
 
+# Local-only working drafts
+POST_DRAFT.md
+
 # Test files
 test_*.py
 nul
